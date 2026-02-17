@@ -5,6 +5,7 @@ A browser extension wallet built exclusively for the **Gonka blockchain** networ
 ## Features
 
 - **Send & Receive** GNK tokens
+- **Import CLI wallets** — import your `inferenced` CLI wallet by entering the mnemonic phrase it gave you during setup
 - **Transaction History** via gonka.gg Explorer API
 - **Staking** — delegate, undelegate, and claim rewards (feature disabled for now)
 - **QR Code** for receiving tokens
