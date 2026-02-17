@@ -22,7 +22,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": [
+        "https://gonka.gg/*",
+        "https://*.gonka.gg/*",
+        "https://gonkalabs.com/*",
+        "https://*.gonkalabs.com/*",
+        "https://hex.exchange/*",
+        "https://*.hex.exchange/*"
+      ],
       "js": ["src/provider/content.ts"],
       "run_at": "document_start",
       "all_frames": true
@@ -35,15 +42,25 @@
   ],
   "host_permissions": [
     "https://gonka.gg/*",
+    "https://*.gonka.gg/*",
+    "https://gonkalabs.com/*",
+    "https://*.gonkalabs.com/*",
+    "https://hex.exchange/*",
+    "https://*.hex.exchange/*",
     "http://node1.gonka.ai/*",
-    "http://node2.gonka.ai/*",
-    "https://*/*",
-    "http://*/*"
+    "http://node2.gonka.ai/*"
   ],
   "web_accessible_resources": [
     {
       "resources": ["src/provider/inpage.js"],
-      "matches": ["http://*/*", "https://*/*"]
+      "matches": [
+        "https://gonka.gg/*",
+        "https://*.gonka.gg/*",
+        "https://gonkalabs.com/*",
+        "https://*.gonkalabs.com/*",
+        "https://hex.exchange/*",
+        "https://*.hex.exchange/*"
+      ]
     }
   ],
   "content_security_policy": {
