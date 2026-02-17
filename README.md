@@ -1,5 +1,7 @@
 # GG Wallet
 
+> **Chrome Web Store:** Currently under review. The store link will be published here once approved. In the meantime, you can install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) or build from source.
+
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
 
 ## Features
