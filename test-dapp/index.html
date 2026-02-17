@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GG Wallet — dApp Connection Test</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0c0c0e;
+      --card: #141418;
+      --border: rgba(255,255,255,0.06);
+      --text: #e4e4e7;
+      --text2: #a1a1aa;
+      --text3: #71717a;
+      --green: #4ade80;
+      --red: #f87171;
+      --yellow: #fbbf24;
+      --accent: #a3e635;
+      --accent-dim: rgba(163,230,53,0.12);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      color: var(--text3);
+      font-size: 0.85rem;
+      margin-bottom: 2rem;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+      font-size: 0.85rem;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text3);
+      flex-shrink: 0;
+    }
+    .dot.detected { background: var(--yellow); }
+    .dot.connected { background: var(--green); }
+
+    .status-text { flex: 1; color: var(--text2); }
+
+    .sections { display: flex; flex-direction: column; gap: 1rem; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.25rem;
+    }
+
+    .card h2 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text3);
+      margin-bottom: 1rem;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    button {
+      padding: 0.5rem 1rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: rgba(255,255,255,0.08); }
+    button:active { transform: scale(0.98); }
+
+    button.primary {
+      background: var(--accent-dim);
+      border-color: rgba(163,230,53,0.25);
+      color: var(--accent);
+    }
+    button.primary:hover { background: rgba(163,230,53,0.2); }
+
+    button.danger {
+      border-color: rgba(248,113,113,0.2);
+      color: var(--red);
+    }
+
+    .output {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.75rem;
+      line-height: 1.6;
+      color: var(--text2);
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 240px;
+      overflow-y: auto;
+      min-height: 48px;
+    }
+
+    .output:empty::before {
+      content: 'Results will appear here...';
+      color: var(--text3);
+    }
+
+    .output .success { color: var(--green); }
+    .output .error { color: var(--red); }
+    .output .info { color: var(--yellow); }
+
+    .input-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 0.5rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.3);
+      color: var(--text);
+      font-size: 0.8rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      outline: none;
+    }
+    input[type="text"]:focus { border-color: rgba(163,230,53,0.3); }
+    input[type="text"]::placeholder { color: var(--text3); }
+
+    .log {
+      margin-top: 1rem;
+    }
+    .log h3 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text3);
+      margin-bottom: 0.5rem;
+    }
+
+    #event-log {
+      max-height: 150px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>GG Wallet — dApp Test</h1>
+    <p class="subtitle">Test the Keplr-compatible provider at <code>window.gonkaWallet</code></p>
+
+    <!-- Status -->
+    <div class="status-bar">
+      <div class="dot" id="status-dot"></div>
+      <span class="status-text" id="status-text">Checking for provider...</span>
+    </div>
+
+    <div class="sections">
+
+      <!-- 1. Connection -->
+      <div class="card">
+        <h2>1. Connection</h2>
+        <div class="btn-row">
+          <button class="primary" onclick="doEnable()">enable("gonka-mainnet")</button>
+          <button onclick="doGetKey()">getKey("gonka-mainnet")</button>
+        </div>
+        <div class="output" id="out-connection"></div>
+      </div>
+
+      <!-- 2. Offline Signer -->
+      <div class="card">
+        <h2>2. Offline Signer</h2>
+        <div class="btn-row">
+          <button onclick="doGetOfflineSigner()">getOfflineSigner()</button>
+          <button onclick="doGetAccounts()">signer.getAccounts()</button>
+        </div>
+        <div class="output" id="out-signer"></div>
+      </div>
+
+      <!-- 3. Sign Amino -->
+      <div class="card">
+        <h2>3. Sign Amino (test message)</h2>
+        <div class="btn-row">
+          <button onclick="doSignAmino()">signAmino()</button>
+        </div>
+        <div class="output" id="out-amino"></div>
+      </div>
+
+      <!-- 4. Sign Direct -->
+      <div class="card">
+        <h2>4. Sign Direct (empty body)</h2>
+        <div class="btn-row">
+          <button onclick="doSignDirect()">signDirect()</button>
+        </div>
+        <div class="output" id="out-direct"></div>
+      </div>
+
+      <!-- 5. Sign Arbitrary -->
+      <div class="card">
+        <h2>5. Sign Arbitrary</h2>
+        <div class="input-row">
+          <input type="text" id="arb-message" placeholder="Message to sign (e.g. Hello GG Wallet)" value="Hello from test dApp!" />
+        </div>
+        <div class="btn-row">
+          <button onclick="doSignArbitrary()">signArbitrary()</button>
+        </div>
+        <div class="output" id="out-arbitrary"></div>
+      </div>
+
+      <!-- 6. Suggest Chain -->
+      <div class="card">
+        <h2>6. Suggest Chain</h2>
+        <div class="btn-row">
+          <button onclick="doSuggestChain()">experimentalSuggestChain()</button>
+        </div>
+        <div class="output" id="out-suggest"></div>
+      </div>
+
+      <!-- Event Log -->
+      <div class="card">
+        <h2>Event Log</h2>
+        <div class="output" id="event-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CHAIN_ID = "gonka-mainnet";
+    let _address = "";
+    let _signer = null;
+
+    // ---- Helpers ----
+
+    function out(id, html) {
+      document.getElementById(id).innerHTML = html;
+    }
+
+    function ok(text) { return `<span class="success">✓ </span>` + escHtml(text); }
+    function err(text) { return `<span class="error">✗ </span>` + escHtml(text); }
+    function info(text) { return `<span class="info">→ </span>` + escHtml(text); }
+
+    function escHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+
+    function jsonPretty(obj) {
+      return escHtml(JSON.stringify(obj, (key, value) => {
+        // Convert Uint8Array-like objects to hex for display
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          const keys = Object.keys(value);
+          if (keys.length > 4 && keys.every(k => !isNaN(Number(k)))) {
+            const bytes = new Uint8Array(keys.map(k => value[k]));
+            return "0x" + Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+          }
+        }
+        if (value instanceof Uint8Array) {
+          return "0x" + Array.from(value).map(b => b.toString(16).padStart(2, "0")).join("");
+        }
+        return value;
+      }, 2));
+    }
+
+    function logEvent(msg) {
+      const el = document.getElementById("event-log");
+      const time = new Date().toLocaleTimeString();
+      el.innerHTML += `<span class="info">[${escHtml(time)}]</span> ${escHtml(msg)}\n`;
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // ---- Detection ----
+
+    function updateStatus() {
+      const dot = document.getElementById("status-dot");
+      const text = document.getElementById("status-text");
+
+      if (window.gonkaWallet) {
+        if (_address) {
+          dot.className = "dot connected";
+          text.textContent = `Connected: ${_address}`;
+        } else {
+          dot.className = "dot detected";
+          text.textContent = "Provider detected — not connected yet";
+        }
+      } else {
+        dot.className = "dot";
+        text.textContent = "Provider not found. Is the GG Wallet extension installed?";
+      }
+    }
+
+    // ---- Actions ----
+
+    async function doEnable() {
+      out("out-connection", info("Calling enable(\"" + CHAIN_ID + "\")..."));
+      try {
+        await window.gonkaWallet.enable(CHAIN_ID);
+        out("out-connection", ok("enable() succeeded — wallet is connected"));
+        logEvent("enable() succeeded");
+        // Auto-fetch key
+        await doGetKey();
+      } catch (e) {
+        out("out-connection", err(e.message));
+        logEvent("enable() failed: " + e.message);
+      }
+      updateStatus();
+    }
+
+    async function doGetKey() {
+      const outId = "out-connection";
+      try {
+        const key = await window.gonkaWallet.getKey(CHAIN_ID);
+        _address = key.bech32Address;
+        const display = {
+          name: key.name,
+          algo: key.algo,
+          bech32Address: key.bech32Address,
+          pubKey: key.pubKey,
+          isNanoLedger: key.isNanoLedger,
+        };
+        out(outId, ok("getKey() result:\n") + jsonPretty(display));
+        logEvent("getKey() → " + key.bech32Address);
+      } catch (e) {
+        out(outId, err(e.message));
+        logEvent("getKey() failed: " + e.message);
+      }
+      updateStatus();
+    }
+
+    async function doGetOfflineSigner() {
+      try {
+        _signer = window.gonkaWallet.getOfflineSigner(CHAIN_ID);
+        out("out-signer", ok("getOfflineSigner() returned signer object\n") +
+          info("Methods: " + Object.keys(Object.getPrototypeOf(_signer)).join(", ")));
+        logEvent("getOfflineSigner() created");
+      } catch (e) {
+        out("out-signer", err(e.message));
+      }
+    }
+
+    async function doGetAccounts() {
+      if (!_signer) {
+        out("out-signer", err("No signer — call getOfflineSigner() first"));
+        return;
+      }
+      try {
+        const accounts = await _signer.getAccounts();
+        out("out-signer", ok("getAccounts() result:\n") + jsonPretty(accounts));
+        logEvent("getAccounts() → " + accounts.length + " account(s)");
+      } catch (e) {
+        out("out-signer", err(e.message));
+        logEvent("getAccounts() failed: " + e.message);
+      }
+    }
+
+    async function doSignAmino() {
+      if (!_address) {
+        out("out-amino", err("Not connected — call enable() first"));
+        return;
+      }
+      out("out-amino", info("Signing test Amino message..."));
+      try {
+        const signDoc = {
+          chain_id: CHAIN_ID,
+          account_number: "0",
+          sequence: "0",
+          fee: { gas: "200000", amount: [{ amount: "0", denom: "ngonka" }] },
+          msgs: [{
+            type: "cosmos-sdk/MsgSend",
+            value: {
+              from_address: _address,
+              to_address: _address,
+              amount: [{ amount: "1", denom: "ngonka" }],
+            }
+          }],
+          memo: "test from GG Wallet dApp tester",
+        };
+        const result = await window.gonkaWallet.signAmino(CHAIN_ID, _address, signDoc);
+        out("out-amino", ok("signAmino() succeeded:\n") + jsonPretty(result));
+        logEvent("signAmino() succeeded");
+      } catch (e) {
+        out("out-amino", err(e.message));
+        logEvent("signAmino() failed: " + e.message);
+      }
+    }
+
+    async function doSignDirect() {
+      if (!_address) {
+        out("out-direct", err("Not connected — call enable() first"));
+        return;
+      }
+      out("out-direct", info("Signing test Direct message..."));
+      try {
+        const signDoc = {
+          bodyBytes: new Uint8Array([10, 0]),
+          authInfoBytes: new Uint8Array([18, 0]),
+          chainId: CHAIN_ID,
+          accountNumber: "0",
+        };
+        const result = await window.gonkaWallet.signDirect(CHAIN_ID, _address, signDoc);
+        out("out-direct", ok("signDirect() succeeded:\n") + jsonPretty(result));
+        logEvent("signDirect() succeeded");
+      } catch (e) {
+        out("out-direct", err(e.message));
+        logEvent("signDirect() failed: " + e.message);
+      }
+    }
+
+    async function doSignArbitrary() {
+      if (!_address) {
+        out("out-arbitrary", err("Not connected — call enable() first"));
+        return;
+      }
+      const msg = document.getElementById("arb-message").value || "Hello";
+      out("out-arbitrary", info("Signing: \"" + msg + "\"..."));
+      try {
+        const result = await window.gonkaWallet.signArbitrary(CHAIN_ID, _address, msg);
+        out("out-arbitrary", ok("signArbitrary() succeeded:\n") + jsonPretty(result));
+        logEvent("signArbitrary() succeeded");
+      } catch (e) {
+        out("out-arbitrary", err(e.message));
+        logEvent("signArbitrary() failed: " + e.message);
+      }
+    }
+
+    async function doSuggestChain() {
+      out("out-suggest", info("Suggesting test chain..."));
+      try {
+        await window.gonkaWallet.experimentalSuggestChain({
+          chainId: "test-chain-1",
+          chainName: "Test Chain",
+          rpc: "http://localhost:26657",
+          rest: "http://localhost:1317",
+          bip44: { coinType: 118 },
+          bech32Config: {
+            bech32PrefixAccAddr: "test",
+            bech32PrefixAccPub: "testpub",
+            bech32PrefixValAddr: "testvaloper",
+            bech32PrefixValPub: "testvaloperpub",
+            bech32PrefixConsAddr: "testvalcons",
+            bech32PrefixConsPub: "testvalconspub",
+          },
+          currencies: [{ coinDenom: "TEST", coinMinimalDenom: "utest", coinDecimals: 6 }],
+          feeCurrencies: [{ coinDenom: "TEST", coinMinimalDenom: "utest", coinDecimals: 6, gasPriceStep: { low: 0.01, average: 0.025, high: 0.04 } }],
+          stakeCurrency: { coinDenom: "TEST", coinMinimalDenom: "utest", coinDecimals: 6 },
+        });
+        out("out-suggest", ok("experimentalSuggestChain() succeeded — \"test-chain-1\" added"));
+        logEvent("suggestChain() succeeded");
+      } catch (e) {
+        out("out-suggest", err(e.message));
+        logEvent("suggestChain() failed: " + e.message);
+      }
+    }
+
+    // ---- Events ----
+
+    window.addEventListener("keplr_keystorechange", () => {
+      logEvent("keplr_keystorechange event fired — account may have changed");
+    });
+
+    window.addEventListener("gonkaWallet#initialized", () => {
+      logEvent("gonkaWallet#initialized event fired");
+      updateStatus();
+    });
+
+    window.addEventListener("keplr#initialized", () => {
+      logEvent("keplr#initialized event fired");
+    });
+
+    // ---- Init ----
+
+    // Wait a moment for the provider to inject
+    setTimeout(updateStatus, 500);
+    setTimeout(updateStatus, 1500);
+    logEvent("Test page loaded — waiting for provider...");
+  </script>
+</body>
+</html>

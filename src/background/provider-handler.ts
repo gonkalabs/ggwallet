@@ -1,0 +1,576 @@
+/**
+ * Provider handler — processes Keplr-compatible API requests
+ * received from the content script.
+ *
+ * Methods that need user approval (enable, signAmino, signDirect,
+ * signArbitrary) open a popup window and wait for user consent.
+ *
+ * Methods that don't need approval (getKey, sendTx,
+ * experimentalSuggestChain) execute immediately.
+ */
+
+import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { serializeSignDoc } from "@cosmjs/amino";
+import { toBase64, fromHex, fromBech32 } from "@cosmjs/encoding";
+import { Secp256k1, sha256 } from "@cosmjs/crypto";
+import { SignDoc } from "cosmjs-types/cosmos/tx/v1beta1/tx";
+
+import { getMnemonic, getAddress, isUnlocked, getWalletList } from "./keystore";
+import {
+  GONKA_CHAIN_ID,
+  GONKA_COIN_TYPE,
+  GONKA_BECH32_PREFIX,
+} from "@/lib/gonka";
+import { getActiveEndpoint } from "@/lib/rpc";
+import { storageGet, storageSet, KEYS, type ConnectedSite } from "@/lib/storage";
+import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve } from "@cosmjs/crypto";
+
+// ------------------------------------------------------------------
+//  HD Path
+// ------------------------------------------------------------------
+
+const GONKA_HD: HdPath = [
+  Slip10RawIndex.hardened(44),
+  Slip10RawIndex.hardened(GONKA_COIN_TYPE),
+  Slip10RawIndex.hardened(0),
+  Slip10RawIndex.normal(0),
+  Slip10RawIndex.normal(0),
+];
+
+// ------------------------------------------------------------------
+//  Suggested chains store (in-memory, non-persistent)
+// ------------------------------------------------------------------
+
+const _suggestedChains = new Map<string, any>();
+
+// ------------------------------------------------------------------
+//  Pending approval requests
+// ------------------------------------------------------------------
+
+interface PendingRequest {
+  method: string;
+  params: any;
+  origin: string;
+  resolve: (result: { result?: any; error?: string }) => void;
+}
+
+const _pendingRequests = new Map<string, PendingRequest>();
+let _requestCounter = 0;
+
+function generateRequestId(): string {
+  return `req_${Date.now()}_${++_requestCounter}`;
+}
+
+/**
+ * Open the approval popup and return a Promise that resolves when
+ * the user approves or rejects.
+ */
+function requestApproval(
+  method: string,
+  params: any,
+  origin: string,
+): Promise<{ result?: any; error?: string }> {
+  return new Promise((resolve) => {
+    const requestId = generateRequestId();
+
+    _pendingRequests.set(requestId, { method, params, origin, resolve });
+
+    // Build the URL for the approval page
+    const approvalUrl = chrome.runtime.getURL(
+      `src/popup/approval.html?requestId=${encodeURIComponent(requestId)}`
+    );
+
+    chrome.windows.create(
+      {
+        url: approvalUrl,
+        type: "popup",
+        width: 400,
+        height: 630,
+        focused: true,
+      },
+      (win) => {
+        if (!win?.id) {
+          // Failed to open window — reject
+          _pendingRequests.delete(requestId);
+          resolve({ error: "Failed to open approval window" });
+          return;
+        }
+
+        // If the user closes the window without responding, reject
+        const onRemoved = (windowId: number) => {
+          if (windowId === win.id && _pendingRequests.has(requestId)) {
+            _pendingRequests.delete(requestId);
+            resolve({ error: "User rejected the request" });
+            chrome.windows.onRemoved.removeListener(onRemoved);
+          }
+        };
+        chrome.windows.onRemoved.addListener(onRemoved);
+      }
+    );
+  });
+}
+
+// ------------------------------------------------------------------
+//  Public API for the approval popup (called from background/index.ts)
+// ------------------------------------------------------------------
+
+/**
+ * Get details of a pending request (for the approval popup to display).
+ */
+export function getPendingRequest(requestId: string): {
+  method: string;
+  params: any;
+  origin: string;
+} | null {
+  const pending = _pendingRequests.get(requestId);
+  if (!pending) return null;
+  return { method: pending.method, params: pending.params, origin: pending.origin };
+}
+
+/**
+ * Approve a pending request — execute the actual operation and resolve.
+ */
+export async function approveRequest(requestId: string): Promise<{ result?: any; error?: string }> {
+  const pending = _pendingRequests.get(requestId);
+  if (!pending) return { error: "Request not found or expired" };
+
+  _pendingRequests.delete(requestId);
+
+  try {
+    let result: { result?: any; error?: string };
+
+    switch (pending.method) {
+      case "enable":
+        result = await executeEnable(pending.params, pending.origin);
+        break;
+      case "signAmino":
+        result = await executeSignAmino(pending.params);
+        break;
+      case "signDirect":
+        result = await executeSignDirect(pending.params);
+        break;
+      case "signArbitrary":
+        result = await executeSignArbitrary(pending.params);
+        break;
+      default:
+        result = { error: `Unsupported approval method: ${pending.method}` };
+    }
+
+    // Resolve the original promise (unblocks the dApp)
+    pending.resolve(result);
+    return result;
+  } catch (err: any) {
+    const errorResult = { error: err.message || String(err) };
+    pending.resolve(errorResult);
+    return errorResult;
+  }
+}
+
+/**
+ * Reject a pending request.
+ */
+export function rejectRequest(requestId: string): { result?: any; error?: string } {
+  const pending = _pendingRequests.get(requestId);
+  if (!pending) return { error: "Request not found or expired" };
+
+  _pendingRequests.delete(requestId);
+  pending.resolve({ error: "User rejected the request" });
+  return { result: true };
+}
+
+// ------------------------------------------------------------------
+//  Connected sites management
+// ------------------------------------------------------------------
+
+export async function getConnectedSites(): Promise<ConnectedSite[]> {
+  return (await storageGet<ConnectedSite[]>(KEYS.CONNECTED_SITES)) || [];
+}
+
+async function addConnectedSite(origin: string, chainIds: string[]): Promise<void> {
+  const sites = await getConnectedSites();
+  const existing = sites.find((s) => s.origin === origin);
+  if (existing) {
+    const merged = new Set([...existing.chainIds, ...chainIds]);
+    existing.chainIds = Array.from(merged);
+  } else {
+    sites.push({ origin, chainIds, connectedAt: Date.now() });
+  }
+  await storageSet({ [KEYS.CONNECTED_SITES]: sites });
+}
+
+export async function disconnectSite(origin: string): Promise<void> {
+  const sites = await getConnectedSites();
+  const filtered = sites.filter((s) => s.origin !== origin);
+  await storageSet({ [KEYS.CONNECTED_SITES]: filtered });
+}
+
+async function isOriginConnected(origin: string, chainIds: string[]): Promise<boolean> {
+  const sites = await getConnectedSites();
+  const site = sites.find((s) => s.origin === origin);
+  if (!site) return false;
+  return chainIds.every((id) => site.chainIds.includes(id));
+}
+
+// ------------------------------------------------------------------
+//  Crypto helpers
+// ------------------------------------------------------------------
+
+async function getWalletForChain(_chainId: string): Promise<DirectSecp256k1HdWallet> {
+  const mnemonic = getMnemonic();
+  if (!mnemonic) throw new Error("Wallet is locked");
+
+  const prefix = getBech32Prefix(_chainId);
+  const hdPaths = getHdPaths(_chainId);
+
+  return DirectSecp256k1HdWallet.fromMnemonic(mnemonic, { prefix, hdPaths });
+}
+
+function getBech32Prefix(chainId: string): string {
+  if (chainId === GONKA_CHAIN_ID) return GONKA_BECH32_PREFIX;
+  const suggested = _suggestedChains.get(chainId);
+  if (suggested?.bech32Config?.bech32PrefixAccAddr) {
+    return suggested.bech32Config.bech32PrefixAccAddr;
+  }
+  return GONKA_BECH32_PREFIX;
+}
+
+function getHdPaths(chainId: string): HdPath[] {
+  if (chainId === GONKA_CHAIN_ID) return [GONKA_HD];
+  const suggested = _suggestedChains.get(chainId);
+  if (suggested?.bip44?.coinType) {
+    return [[
+      Slip10RawIndex.hardened(44),
+      Slip10RawIndex.hardened(suggested.bip44.coinType),
+      Slip10RawIndex.hardened(0),
+      Slip10RawIndex.normal(0),
+      Slip10RawIndex.normal(0),
+    ] as HdPath];
+  }
+  return [GONKA_HD];
+}
+
+function isSupportedChain(chainId: string): boolean {
+  return chainId === GONKA_CHAIN_ID || _suggestedChains.has(chainId);
+}
+
+async function derivePrivateKeyBytes(mnemonic: string, chainId: string): Promise<Uint8Array> {
+  const seed = await Bip39.mnemonicToSeed(new EnglishMnemonic(mnemonic));
+  const hdPaths = getHdPaths(chainId);
+  const { privkey } = Slip10.derivePath(Slip10Curve.Secp256k1, seed, hdPaths[0]);
+  return privkey;
+}
+
+// ------------------------------------------------------------------
+//  Main router
+// ------------------------------------------------------------------
+
+export async function handleProviderRequest(
+  method: string,
+  params: any,
+  origin?: string,
+): Promise<{ result?: any; error?: string }> {
+  try {
+    switch (method) {
+      // --- Methods that need approval ---
+      case "enable":
+        return await handleEnable(params, origin);
+      case "signAmino":
+        return await handleWithApproval("signAmino", params, origin);
+      case "signDirect":
+        return await handleWithApproval("signDirect", params, origin);
+      case "signArbitrary":
+        return await handleWithApproval("signArbitrary", params, origin);
+
+      // --- Methods that don't need approval ---
+      case "getKey":
+        return await executeGetKey(params);
+      case "sendTx":
+        return await executeSendTx(params);
+      case "experimentalSuggestChain":
+        return executeSuggestChain(params);
+      default:
+        return { error: `Unsupported method: ${method}` };
+    }
+  } catch (err: any) {
+    return { error: err.message || String(err) };
+  }
+}
+
+// ------------------------------------------------------------------
+//  Approval wrapper
+// ------------------------------------------------------------------
+
+async function handleWithApproval(
+  method: string,
+  params: any,
+  origin?: string,
+): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) {
+    return { error: "Wallet is locked. Please unlock GG Wallet first." };
+  }
+  return requestApproval(method, params, origin || "unknown");
+}
+
+// ------------------------------------------------------------------
+//  enable — auto-approve if already connected, otherwise popup
+// ------------------------------------------------------------------
+
+async function handleEnable(
+  params: { chainIds: string[] },
+  origin?: string,
+): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) {
+    return { error: "Wallet is locked. Please unlock GG Wallet first." };
+  }
+
+  for (const chainId of params.chainIds) {
+    if (!isSupportedChain(chainId)) {
+      return { error: `Chain ${chainId} is not supported. Use experimentalSuggestChain to add it.` };
+    }
+  }
+
+  // Auto-approve if the origin is already connected for all requested chains
+  if (origin && await isOriginConnected(origin, params.chainIds)) {
+    return { result: true };
+  }
+
+  // Otherwise, request approval via popup
+  return requestApproval("enable", params, origin || "unknown");
+}
+
+// ------------------------------------------------------------------
+//  Execution functions (run after approval or directly)
+// ------------------------------------------------------------------
+
+async function executeEnable(
+  params: { chainIds: string[] },
+  origin: string,
+): Promise<{ result?: any; error?: string }> {
+  if (origin) {
+    await addConnectedSite(origin, params.chainIds);
+  }
+  return { result: true };
+}
+
+async function executeGetKey(params: { chainId: string }): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) return { error: "Wallet is locked" };
+
+  const wallet = await getWalletForChain(params.chainId);
+  const [account] = await wallet.getAccounts();
+
+  const wallets = await getWalletList();
+  const address = getAddress();
+  const currentWallet = wallets.find((w) => w.address === address);
+  const name = currentWallet?.name || "GG Wallet";
+
+  return {
+    result: {
+      name,
+      algo: account.algo,
+      pubKey: Array.from(account.pubkey),
+      address: Array.from(fromBech32(account.address).data),
+      bech32Address: account.address,
+      ethereumHexAddress: "",
+      isNanoLedger: false,
+      isKeystone: false,
+    },
+  };
+}
+
+async function executeSignAmino(params: {
+  chainId: string;
+  signer: string;
+  signDoc: any;
+  signOptions?: any;
+}): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) return { error: "Wallet is locked" };
+
+  const mnemonic = getMnemonic();
+  if (!mnemonic) return { error: "Wallet is locked" };
+
+  const wallet = await getWalletForChain(params.chainId);
+  const [account] = await wallet.getAccounts();
+
+  if (account.address !== params.signer) {
+    return { error: `Signer address mismatch: expected ${account.address}, got ${params.signer}` };
+  }
+
+  const signDoc = params.signDoc;
+  const serialized = serializeSignDoc(signDoc);
+  const hash = sha256(serialized);
+
+  const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
+  const signature = await Secp256k1.createSignature(hash, privKey);
+  const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+
+  return {
+    result: {
+      signed: signDoc,
+      signature: {
+        pub_key: {
+          type: "tendermint/PubKeySecp256k1",
+          value: toBase64(account.pubkey),
+        },
+        signature: toBase64(signatureBytes),
+      },
+    },
+  };
+}
+
+async function executeSignDirect(params: {
+  chainId: string;
+  signer: string;
+  signDoc: any;
+  signOptions?: any;
+}): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) return { error: "Wallet is locked" };
+
+  const mnemonic = getMnemonic();
+  if (!mnemonic) return { error: "Wallet is locked" };
+
+  const wallet = await getWalletForChain(params.chainId);
+  const [account] = await wallet.getAccounts();
+
+  if (account.address !== params.signer) {
+    return { error: `Signer address mismatch: expected ${account.address}, got ${params.signer}` };
+  }
+
+  const bodyBytes = new Uint8Array(params.signDoc.bodyBytes || []);
+  const authInfoBytes = new Uint8Array(params.signDoc.authInfoBytes || []);
+
+  const signDoc = SignDoc.fromPartial({
+    bodyBytes,
+    authInfoBytes,
+    chainId: params.signDoc.chainId || params.chainId,
+    accountNumber: BigInt(params.signDoc.accountNumber || "0"),
+  });
+
+  const signBytes = SignDoc.encode(signDoc).finish();
+  const hash = sha256(signBytes);
+
+  const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
+  const signature = await Secp256k1.createSignature(hash, privKey);
+  const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+
+  return {
+    result: {
+      signed: {
+        bodyBytes: Array.from(bodyBytes),
+        authInfoBytes: Array.from(authInfoBytes),
+        chainId: signDoc.chainId,
+        accountNumber: params.signDoc.accountNumber?.toString() || "0",
+      },
+      signature: {
+        pub_key: {
+          type: "tendermint/PubKeySecp256k1",
+          value: toBase64(account.pubkey),
+        },
+        signature: toBase64(signatureBytes),
+      },
+    },
+  };
+}
+
+async function executeSendTx(params: {
+  chainId: string;
+  tx: number[];
+  mode: string;
+}): Promise<{ result?: any; error?: string }> {
+  const endpoint = await getActiveEndpoint();
+  const txBytes = toBase64(new Uint8Array(params.tx));
+
+  let broadcastMode = "BROADCAST_MODE_SYNC";
+  switch (params.mode) {
+    case "block": broadcastMode = "BROADCAST_MODE_BLOCK"; break;
+    case "sync": broadcastMode = "BROADCAST_MODE_SYNC"; break;
+    case "async": broadcastMode = "BROADCAST_MODE_ASYNC"; break;
+  }
+
+  const resp = await fetch(`${endpoint.rest}cosmos/tx/v1beta1/txs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tx_bytes: txBytes, mode: broadcastMode }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    return { error: `Broadcast failed (${resp.status}): ${text}` };
+  }
+
+  const data = await resp.json();
+  const txResponse = data.tx_response || data;
+
+  if (txResponse.code && txResponse.code !== 0) {
+    return { error: `Transaction failed with code ${txResponse.code}: ${txResponse.raw_log}` };
+  }
+
+  const txHash = txResponse.txhash || "";
+  const hashBytes = fromHex(txHash);
+  return { result: Array.from(hashBytes) };
+}
+
+function executeSuggestChain(params: { chainInfo: any }): { result?: any; error?: string } {
+  const chainInfo = params.chainInfo;
+  if (!chainInfo || !chainInfo.chainId) {
+    return { error: "Invalid chain info: missing chainId" };
+  }
+  _suggestedChains.set(chainInfo.chainId, chainInfo);
+  return { result: true };
+}
+
+async function executeSignArbitrary(params: {
+  chainId: string;
+  signer: string;
+  data: string | number[];
+}): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) return { error: "Wallet is locked" };
+
+  const mnemonic = getMnemonic();
+  if (!mnemonic) return { error: "Wallet is locked" };
+
+  const wallet = await getWalletForChain(params.chainId);
+  const [account] = await wallet.getAccounts();
+
+  let dataBytes: Uint8Array;
+  if (Array.isArray(params.data)) {
+    dataBytes = new Uint8Array(params.data);
+  } else if (typeof params.data === "string") {
+    dataBytes = new TextEncoder().encode(params.data);
+  } else {
+    return { error: "Invalid data format" };
+  }
+
+  const signDoc = {
+    chain_id: "",
+    account_number: "0",
+    sequence: "0",
+    fee: { gas: "0", amount: [] },
+    msgs: [
+      {
+        type: "sign/MsgSignData",
+        value: {
+          signer: params.signer,
+          data: toBase64(dataBytes),
+        },
+      },
+    ],
+    memo: "",
+  };
+
+  const serialized = serializeSignDoc(signDoc);
+  const hash = sha256(serialized);
+
+  const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
+  const signature = await Secp256k1.createSignature(hash, privKey);
+  const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+
+  return {
+    result: {
+      pub_key: {
+        type: "tendermint/PubKeySecp256k1",
+        value: toBase64(account.pubkey),
+      },
+      signature: toBase64(signatureBytes),
+    },
+  };
+}

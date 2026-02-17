@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00e85e"/>
+      <stop offset="100%" stop-color="#00963e"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="32" fill="url(#bg)"/>
+  <text x="50%" y="48%" dominant-baseline="middle" text-anchor="middle"
+        font-family="Inter, system-ui, sans-serif" font-weight="800"
+        font-size="44" fill="white" letter-spacing="-1">G</text>
+  <text x="50%" y="76%" dominant-baseline="middle" text-anchor="middle"
+        font-family="Inter, system-ui, sans-serif" font-weight="600"
+        font-size="12" fill="rgba(255,255,255,0.9)" letter-spacing="3">WALLET</text>
+</svg>
