@@ -2,16 +2,17 @@
 
 [**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
 
-> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.2** with additional features (IBC token display, send IBC tokens, configurable auto-lock, address book, better dApp and cleaner ux).
+> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.3** with additional features (governance, full-precision amounts, IBC tokens, auto-lock, address book, and improved UX).
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
 
 ## Features
 
 - **Send & Receive** GNK tokens
+- **Full-precision amounts** — all balances and transaction amounts displayed without rounding
 - **Import CLI wallets** — import your `inferenced` CLI wallet by entering the mnemonic phrase it gave you during setup
 - **Transaction History** via gonka.gg Explorer API
-- **Staking** — delegate, undelegate, and claim rewards (feature disabled for now)
+- **Governance** — browse proposals, view tally results, vote (Yes / No / Abstain / Veto), and submit new proposals
 - **QR Code** for receiving tokens
 - **Secure Storage** — mnemonic encrypted with AES-GCM (PBKDF2 key derivation)
 - **IBC token support** — view and send IBC tokens alongside native GNK
@@ -82,7 +83,7 @@ src/
   lib/
     gonka.ts           # Chain configuration constants
     gonka-signer.ts    # opengnk-compatible inference request signer
-    cosmos.ts          # CosmJS helpers (balance, send, stake)
+    cosmos.ts          # CosmJS helpers (balance, send, stake, governance)
     api.ts             # gonka.gg Explorer API client
     crypto.ts          # AES-GCM encryption helpers
     format.ts          # Amount formatting utilities
@@ -92,9 +93,7 @@ src/
 
 ## Planned Features
 
-- **Full-precision transaction amounts** — show exact amounts without rounding, even with many decimal places
-- **Staking** — re-enable delegation, undelegation, and reward claiming
-- **Governance** — view proposals, vote, and create new proposals
+- **Staking** — delegate, undelegate, and claim rewards
 
 ## API Key
 

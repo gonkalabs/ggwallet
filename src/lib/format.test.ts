@@ -58,17 +58,20 @@ describe("formatGNK", () => {
 });
 
 describe("formatCompact", () => {
-  it("limits decimal places", () => {
-    expect(formatCompact("1123456789", 4)).toBe("1.1234 GNK");
-    expect(formatCompact("1123456789", 2)).toBe("1.12 GNK");
+  it("shows full precision", () => {
+    expect(formatCompact("1123456789")).toBe("1.123456789 GNK");
   });
 
-  it("removes trailing zeroes", () => {
-    expect(formatCompact("1100000000", 4)).toBe("1.1 GNK");
+  it("strips trailing zeroes", () => {
+    expect(formatCompact("1100000000")).toBe("1.1 GNK");
   });
 
   it("handles whole numbers", () => {
     expect(formatCompact("1000000000")).toBe("1 GNK");
+  });
+
+  it("handles smallest unit", () => {
+    expect(formatCompact("1")).toBe("0.000000001 GNK");
   });
 });
 

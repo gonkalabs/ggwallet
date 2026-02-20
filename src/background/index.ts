@@ -27,7 +27,11 @@ import {
   checkAlarmLock,
 } from "./keystore";
 import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
-import { queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient } from "@/lib/cosmos";
+import {
+  queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient,
+  queryProposals, queryProposal, queryProposalTally, queryVote, voteProposal, submitProposal, depositToProposal,
+  type VoteOption,
+} from "@/lib/cosmos";
 import { getActiveEndpoint, setActiveEndpoint, RpcEndpoint } from "@/lib/rpc";
 import {
   handleProviderRequest,
@@ -341,6 +345,79 @@ async function handleMessage(msg: any): Promise<any> {
       const filtered = entries.filter((e) => e.address !== msg.address);
       await storageSet({ [KEYS.ADDRESS_BOOK]: filtered });
       return { success: true, entries: filtered };
+    }
+
+    // ---- Governance ----
+
+    case "GET_PROPOSALS": {
+      try {
+        const proposals = await queryProposals();
+        return { success: true, proposals };
+      } catch (e: any) {
+        return { success: false, error: e.message, proposals: [] };
+      }
+    }
+
+    case "GET_PROPOSAL": {
+      try {
+        const proposal = await queryProposal(msg.proposalId);
+        return { success: true, proposal };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "GET_PROPOSAL_TALLY": {
+      try {
+        const tally = await queryProposalTally(msg.proposalId);
+        return { success: true, tally };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "GET_VOTE": {
+      try {
+        const address = getAddress();
+        if (!address) return { success: false, vote: null };
+        const vote = await queryVote(msg.proposalId, address);
+        return { success: true, vote };
+      } catch {
+        return { success: false, vote: null };
+      }
+    }
+
+    case "VOTE_PROPOSAL": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      try {
+        const result = await voteProposal(mnemonic, msg.proposalId, msg.option as VoteOption);
+        return { success: true, ...result };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "SUBMIT_PROPOSAL": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      try {
+        const result = await submitProposal(mnemonic, msg.title, msg.description, msg.deposit || "0");
+        return { success: true, ...result };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "DEPOSIT_PROPOSAL": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      try {
+        const result = await depositToProposal(mnemonic, msg.proposalId, msg.amount);
+        return { success: true, ...result };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
     }
 
     default:

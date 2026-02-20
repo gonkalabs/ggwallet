@@ -52,7 +52,7 @@
   }
 
   .btn-ghost {
-    @apply w-full py-3.5 px-5 bg-transparent hover:bg-white/5 active:bg-white/8
+    @apply w-full py-3.5 px-5 bg-transparent hover:bg-white/5 active:bg-white/[0.08]
            text-white font-medium rounded-2xl transition-all duration-200
            disabled:opacity-40 disabled:cursor-not-allowed
            active:scale-[0.98];

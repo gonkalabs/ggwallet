@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toDisplay, toDisplayDecimals } from "@/lib/format";
 import { GONKA_DISPLAY_DENOM } from "@/lib/gonka";
 import type { TokenBalance } from "@/lib/cosmos";
@@ -21,6 +21,13 @@ export default function BalanceCard({
   refreshing,
 }: BalanceCardProps) {
   const displayAmount = toDisplay(balance);
+  const balanceSizeClass = useMemo(() => {
+    const len = displayAmount.length;
+    if (len > 18) return "text-lg";
+    if (len > 14) return "text-xl";
+    if (len > 10) return "text-2xl";
+    return "text-3xl";
+  }, [displayAmount]);
   const [copied, setCopied] = useState(false);
 
   const ibcTokens = tokenBalances.filter((t) => t.isIbc);
@@ -53,7 +60,7 @@ export default function BalanceCard({
             <div className="h-9 w-36 bg-white/5 rounded-xl animate-pulse" />
           ) : (
             <>
-              <span className="text-3xl font-extrabold tracking-tight">{displayAmount}</span>
+              <span className={`${balanceSizeClass} font-extrabold tracking-tight`}>{displayAmount}</span>
               <span className="text-sm font-semibold text-gonka-400">{GONKA_DISPLAY_DENOM}</span>
             </>
           )}

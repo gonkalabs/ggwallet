@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GG Wallet",
   "description": "GG Wallet — an open-source, community wallet to interact with the Gonka.ai blockchain: send, receive, stake, and more.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "icons": {
     "16": "src/assets/icons/icon16.png",
     "48": "src/assets/icons/icon48.png",

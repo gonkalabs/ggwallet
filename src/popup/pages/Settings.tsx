@@ -434,6 +434,25 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Governance */}
+        <div>
+          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+            Governance
+          </h3>
+          <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
+            <SettingsRow
+              label="Proposals"
+              description="View, vote, and create governance proposals"
+              onClick={() => navigate("/proposals")}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0012 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75z" />
+                </svg>
+              }
+            />
+          </div>
+        </div>
+
         {/* Node Operations */}
         <div>
           <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
@@ -469,7 +488,7 @@ export default function Settings() {
             About
           </h3>
           <div className="card text-xs text-surface-500 space-y-1.5">
-            <p className="text-surface-300 font-medium">GG Wallet v0.1.2</p>
+            <p className="text-surface-300 font-medium">GG Wallet v0.1.3</p>
             <p>Open-source, community wallet for the Gonka.ai blockchain</p>
             <div className="flex items-center gap-3 pt-1">
               <a

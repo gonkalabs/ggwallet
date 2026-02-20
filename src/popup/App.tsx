@@ -12,6 +12,9 @@ import Receive from "@/popup/pages/Receive";
 import Transactions from "@/popup/pages/Transactions";
 import Settings from "@/popup/pages/Settings";
 import AddWallet from "@/popup/pages/AddWallet";
+import Proposals from "@/popup/pages/Proposals";
+import ProposalDetail from "@/popup/pages/ProposalDetail";
+import CreateProposal from "@/popup/pages/CreateProposal";
 import Spinner from "@/popup/components/Spinner";
 
 export default function App() {
@@ -53,6 +56,9 @@ export default function App() {
             <Route path="/receive" element={<Receive />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/proposals" element={<Proposals />} />
+            <Route path="/proposals/create" element={<CreateProposal />} />
+            <Route path="/proposals/:id" element={<ProposalDetail />} />
             <Route path="/add-wallet" element={<AddWallet />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </>

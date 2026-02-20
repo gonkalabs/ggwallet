@@ -257,6 +257,199 @@ export async function undelegateTokens(
   return { txHash: result.transactionHash };
 }
 
+// ---- Governance ----
+
+export interface Proposal {
+  id: string;
+  title: string;
+  summary: string;
+  description: string;
+  proposer: string;
+  status: string;
+  submitTime: string;
+  depositEndTime: string;
+  votingStartTime: string;
+  votingEndTime: string;
+  totalDeposit: string;
+  metadata: string;
+  finalTallyResult: {
+    yes: string;
+    abstain: string;
+    no: string;
+    noWithVeto: string;
+  };
+}
+
+export type VoteOption = "VOTE_OPTION_YES" | "VOTE_OPTION_NO" | "VOTE_OPTION_ABSTAIN" | "VOTE_OPTION_NO_WITH_VETO";
+
+function parseProposal(p: any): Proposal {
+  const msgs = p.messages || [];
+  const content = msgs[0]?.content || p.content || {};
+  const rawMeta = p.metadata || "";
+  const meta = (() => { try { return JSON.parse(rawMeta); } catch { return {}; } })();
+
+  const summary = p.summary || meta.summary || content.description || "";
+  const description = meta.details || meta.description || content.description || summary;
+
+  return {
+    id: p.id || p.proposal_id || "0",
+    title: p.title || meta.title || content.title || `Proposal #${p.id || p.proposal_id}`,
+    summary,
+    description,
+    proposer: p.proposer || "",
+    status: p.status || "",
+    submitTime: p.submit_time || "",
+    depositEndTime: p.deposit_end_time || "",
+    votingStartTime: p.voting_start_time || "",
+    votingEndTime: p.voting_end_time || "",
+    totalDeposit: p.total_deposit?.[0]?.amount || "0",
+    metadata: rawMeta,
+    finalTallyResult: {
+      yes: p.final_tally_result?.yes_count || p.final_tally_result?.yes || "0",
+      abstain: p.final_tally_result?.abstain_count || p.final_tally_result?.abstain || "0",
+      no: p.final_tally_result?.no_count || p.final_tally_result?.no || "0",
+      noWithVeto: p.final_tally_result?.no_with_veto_count || p.final_tally_result?.no_with_veto || "0",
+    },
+  };
+}
+
+export async function queryProposals(): Promise<Proposal[]> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(
+    `${rest}cosmos/gov/v1/proposals?pagination.limit=50&pagination.reverse=true`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch proposals: ${resp.status}`);
+  const data = await resp.json();
+  return (data.proposals || []).map(parseProposal);
+}
+
+export async function queryProposal(proposalId: string): Promise<Proposal> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(
+    `${rest}cosmos/gov/v1/proposals/${proposalId}`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch proposal: ${resp.status}`);
+  const data = await resp.json();
+  return parseProposal(data.proposal);
+}
+
+export async function queryProposalTally(proposalId: string): Promise<Proposal["finalTallyResult"]> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(
+    `${rest}cosmos/gov/v1/proposals/${proposalId}/tally`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch tally: ${resp.status}`);
+  const data = await resp.json();
+  const t = data.tally || {};
+  return {
+    yes: t.yes_count || t.yes || "0",
+    abstain: t.abstain_count || t.abstain || "0",
+    no: t.no_count || t.no || "0",
+    noWithVeto: t.no_with_veto_count || t.no_with_veto || "0",
+  };
+}
+
+export async function queryVote(proposalId: string, voter: string): Promise<string | null> {
+  const { rest } = await getActiveEndpoint();
+  try {
+    const resp = await fetch(
+      `${rest}cosmos/gov/v1/proposals/${proposalId}/votes/${voter}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.vote?.options?.[0]?.option || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function voteProposal(
+  mnemonic: string,
+  proposalId: string,
+  option: VoteOption
+): Promise<{ txHash: string }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const optionMap: Record<VoteOption, number> = {
+    VOTE_OPTION_YES: 1,
+    VOTE_OPTION_ABSTAIN: 2,
+    VOTE_OPTION_NO: 3,
+    VOTE_OPTION_NO_WITH_VETO: 4,
+  };
+
+  const msg = {
+    typeUrl: "/cosmos.gov.v1beta1.MsgVote",
+    value: {
+      proposalId: BigInt(proposalId),
+      voter: address,
+      option: optionMap[option],
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [msg], "auto");
+  if (result.code !== 0) {
+    throw new Error(`Vote failed: ${result.rawLog}`);
+  }
+  return { txHash: result.transactionHash };
+}
+
+export async function submitProposal(
+  mnemonic: string,
+  title: string,
+  description: string,
+  initialDeposit: string
+): Promise<{ txHash: string; proposalId?: string }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const msg = {
+    typeUrl: "/cosmos.gov.v1beta1.MsgSubmitProposal",
+    value: {
+      content: {
+        typeUrl: "/cosmos.gov.v1beta1.TextProposal",
+        value: {
+          title,
+          description,
+        },
+      },
+      initialDeposit: initialDeposit !== "0" ? [coin(initialDeposit, GONKA_DENOM)] : [],
+      proposer: address,
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [msg], "auto");
+  if (result.code !== 0) {
+    throw new Error(`Submit proposal failed: ${result.rawLog}`);
+  }
+  return { txHash: result.transactionHash };
+}
+
+export async function depositToProposal(
+  mnemonic: string,
+  proposalId: string,
+  amount: string
+): Promise<{ txHash: string }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const msg = {
+    typeUrl: "/cosmos.gov.v1beta1.MsgDeposit",
+    value: {
+      proposalId: BigInt(proposalId),
+      depositor: address,
+      amount: [coin(amount, GONKA_DENOM)],
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [msg], "auto");
+  if (result.code !== 0) {
+    throw new Error(`Deposit failed: ${result.rawLog}`);
+  }
+  return { txHash: result.transactionHash };
+}
+
 /**
  * Query all validators (REST API).
  */

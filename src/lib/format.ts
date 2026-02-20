@@ -45,17 +45,12 @@ export function formatGNK(amount: string | bigint): string {
 }
 
 /**
- * Format a minimal denom amount for compact display (e.g., "1.23 GNK").
- * Shows up to `maxDecimals` decimal places.
+ * Format a minimal denom amount with denom label (e.g., "1.23 GNK").
+ * Shows full precision — trailing zeros are stripped but no digits are rounded.
  */
-export function formatCompact(amount: string | bigint, maxDecimals = 4): string {
+export function formatCompact(amount: string | bigint): string {
   const display = toDisplay(amount);
-  const parts = display.split(".");
-  if (parts.length === 1) return `${display} ${GONKA_DISPLAY_DENOM}`;
-
-  const trimmed = parts[1].slice(0, maxDecimals).replace(/0+$/, "");
-  if (!trimmed) return `${parts[0]} ${GONKA_DISPLAY_DENOM}`;
-  return `${parts[0]}.${trimmed} ${GONKA_DISPLAY_DENOM}`;
+  return `${display} ${GONKA_DISPLAY_DENOM}`;
 }
 
 /**
