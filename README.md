@@ -2,7 +2,7 @@
 
 [**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
 
-> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.1** with additional features (IBC token display, send IBC tokens, configurable auto-lock, address book).
+> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.2** with additional features (IBC token display, send IBC tokens, configurable auto-lock, address book, better dApp and cleaner ux).
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
 
