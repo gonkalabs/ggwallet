@@ -469,7 +469,7 @@ export default function Settings() {
             About
           </h3>
           <div className="card text-xs text-surface-500 space-y-1.5">
-            <p className="text-surface-300 font-medium">GG Wallet v0.1.1</p>
+            <p className="text-surface-300 font-medium">GG Wallet v0.1.2</p>
             <p>Open-source, community wallet for the Gonka.ai blockchain</p>
             <div className="flex items-center gap-3 pt-1">
               <a
