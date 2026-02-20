@@ -5,6 +5,7 @@
 
 import {
   addWallet,
+  addViewOnlyWallet,
   switchWallet,
   renameWallet,
   removeWallet,
@@ -12,6 +13,7 @@ import {
   lock,
   isInitialized,
   isUnlocked,
+  isViewOnly,
   getAddress,
   getActiveIndex,
   getStoredAddress,
@@ -19,8 +21,12 @@ import {
   getMnemonic,
   exportPrivateKeyHex,
   touchActivity,
+  loadSettings,
+  getAutoLockMinutes,
+  setAutoLockTimeout,
 } from "./keystore";
-import { queryBalance, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient } from "@/lib/cosmos";
+import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
+import { queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient } from "@/lib/cosmos";
 import { getActiveEndpoint, setActiveEndpoint, RpcEndpoint } from "@/lib/rpc";
 import {
   handleProviderRequest,
@@ -43,6 +49,9 @@ function broadcastKeystoreChange(): void {
     }
   });
 }
+
+// Load persisted settings on startup
+loadSettings();
 
 // Auto-lock alarm
 const ALARM_NAME = "gg-wallet-auto-lock";
@@ -76,6 +85,7 @@ async function handleMessage(msg: any): Promise<any> {
       return {
         isInitialized: initialized,
         isUnlocked: unlocked,
+        isViewOnly: isViewOnly(),
         address,
         wallets,
         activeIndex: unlocked ? getActiveIndex() : 0,
@@ -87,6 +97,15 @@ async function handleMessage(msg: any): Promise<any> {
     case "CREATE_WALLET": {
       try {
         const { address, index } = await addWallet(msg.mnemonic, msg.password, msg.name);
+        return { success: true, address, index };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "ADD_VIEW_ONLY_WALLET": {
+      try {
+        const { address, index } = await addViewOnlyWallet(msg.address, msg.name);
         return { success: true, address, index };
       } catch (e: any) {
         return { success: false, error: e.message };
@@ -117,7 +136,7 @@ async function handleMessage(msg: any): Promise<any> {
       try {
         const address = await switchWallet(msg.index);
         broadcastKeystoreChange();
-        return { success: true, address };
+        return { success: true, address, isViewOnly: isViewOnly() };
       } catch (e: any) {
         return { success: false, error: e.message };
       }
@@ -150,7 +169,7 @@ async function handleMessage(msg: any): Promise<any> {
         const address = await unlock(msg.password);
         const wallets = await getWalletList();
         broadcastKeystoreChange();
-        return { success: true, address, wallets, activeIndex: getActiveIndex() };
+        return { success: true, address, wallets, activeIndex: getActiveIndex(), isViewOnly: isViewOnly() };
       } catch {
         return { success: false, error: "Wrong password" };
       }
@@ -166,12 +185,13 @@ async function handleMessage(msg: any): Promise<any> {
 
     case "GET_BALANCE": {
       const address = getAddress();
-      if (!address) return { balance: "0" };
+      if (!address) return { balance: "0", tokenBalances: [] };
       try {
-        const balance = await queryBalance(address);
-        return { balance };
+        const tokenBalances = await queryAllBalances(address);
+        const gnk = tokenBalances.find((b) => !b.isIbc);
+        return { balance: gnk?.amount ?? "0", tokenBalances };
       } catch {
-        return { balance: "0", error: "Failed to fetch balance" };
+        return { balance: "0", tokenBalances: [], error: "Failed to fetch balance" };
       }
     }
 
@@ -180,7 +200,7 @@ async function handleMessage(msg: any): Promise<any> {
     case "SEND_TOKENS": {
       const mnemonic = getMnemonic();
       if (!mnemonic) return { success: false, error: "Wallet is locked" };
-      const result = await sendTokens(mnemonic, msg.recipient, msg.amount, msg.memo || "");
+      const result = await sendTokens(mnemonic, msg.recipient, msg.amount, msg.denom, msg.memo || "");
       return { success: true, ...result };
     }
 
@@ -269,6 +289,43 @@ async function handleMessage(msg: any): Promise<any> {
     case "REJECT_REQUEST": {
       const result = rejectRequest(msg.requestId);
       return result;
+    }
+
+    // ---- Auto-lock settings ----
+
+    case "GET_AUTO_LOCK": {
+      return { minutes: getAutoLockMinutes() };
+    }
+
+    case "SET_AUTO_LOCK": {
+      await setAutoLockTimeout(msg.minutes);
+      return { success: true };
+    }
+
+    // ---- Address book ----
+
+    case "GET_ADDRESS_BOOK": {
+      const entries = (await storageGet<AddressBookEntry[]>(KEYS.ADDRESS_BOOK)) || [];
+      return { entries };
+    }
+
+    case "ADD_ADDRESS_ENTRY": {
+      const entries = (await storageGet<AddressBookEntry[]>(KEYS.ADDRESS_BOOK)) || [];
+      const exists = entries.findIndex((e) => e.address === msg.entry.address);
+      if (exists >= 0) {
+        entries[exists] = msg.entry;
+      } else {
+        entries.push(msg.entry);
+      }
+      await storageSet({ [KEYS.ADDRESS_BOOK]: entries });
+      return { success: true, entries };
+    }
+
+    case "REMOVE_ADDRESS_ENTRY": {
+      const entries = (await storageGet<AddressBookEntry[]>(KEYS.ADDRESS_BOOK)) || [];
+      const filtered = entries.filter((e) => e.address !== msg.address);
+      await storageSet({ [KEYS.ADDRESS_BOOK]: filtered });
+      return { success: true, entries: filtered };
     }
 
     default:

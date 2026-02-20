@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/popup/store";
 import { sendMessage } from "@/lib/messaging";
 import { truncateAddress } from "@/lib/format";
-import { GONKA_CHAIN_ID, GONKA_CHAIN_NAME } from "@/lib/gonka";
+import { GONKA_CHAIN_ID, GONKA_CHAIN_NAME, GONKA_BECH32_PREFIX } from "@/lib/gonka";
 import { KNOWN_ENDPOINTS, pingEndpoint, type RpcEndpoint } from "@/lib/rpc";
-import type { ConnectedSite } from "@/lib/storage";
+import type { ConnectedSite, AddressBookEntry } from "@/lib/storage";
 import Layout from "@/popup/components/Layout";
 import PasswordInput from "@/popup/components/PasswordInput";
 import Spinner from "@/popup/components/Spinner";
@@ -31,6 +31,19 @@ export default function Settings() {
   const [connectedSites, setConnectedSites] = useState<ConnectedSite[]>([]);
   const [sitesModal, setSitesModal] = useState(false);
 
+  // Auto-lock
+  const [autoLockMinutes, setAutoLockMinutes] = useState<number>(5);
+  const [autoLockSaving, setAutoLockSaving] = useState(false);
+
+  // Address book
+  const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
+  const [addrBookModal, setAddrBookModal] = useState(false);
+  const [newEntryAddr, setNewEntryAddr] = useState("");
+  const [newEntryName, setNewEntryName] = useState("");
+  const [newEntryNote, setNewEntryNote] = useState("");
+  const [addingEntry, setAddingEntry] = useState(false);
+  const [addrBookError, setAddrBookError] = useState("");
+
   // RPC settings
   const [rpcModal, setRpcModal] = useState(false);
   const [activeRpc, setActiveRpc] = useState<RpcEndpoint | null>(null);
@@ -40,7 +53,7 @@ export default function Settings() {
   const [customRest, setCustomRest] = useState("");
   const [rpcSaving, setRpcSaving] = useState(false);
 
-  // Load active RPC and connected sites on mount
+  // Load all settings on mount
   useEffect(() => {
     sendMessage({ type: "GET_RPC_ENDPOINT" }).then((resp) => {
       if (resp.endpoint) setActiveRpc(resp.endpoint);
@@ -48,7 +61,55 @@ export default function Settings() {
     sendMessage({ type: "GET_CONNECTED_SITES" }).then((resp) => {
       if (resp.sites) setConnectedSites(resp.sites);
     });
+    sendMessage({ type: "GET_AUTO_LOCK" }).then((resp) => {
+      if (resp.minutes !== undefined) setAutoLockMinutes(resp.minutes);
+    });
+    sendMessage({ type: "GET_ADDRESS_BOOK" }).then((resp) => {
+      if (resp.entries) setAddressBook(resp.entries);
+    });
   }, []);
+
+  const loadAddressBook = useCallback(() => {
+    sendMessage({ type: "GET_ADDRESS_BOOK" }).then((resp) => {
+      if (resp.entries) setAddressBook(resp.entries);
+    });
+  }, []);
+
+  const handleSaveAutoLock = async (minutes: number) => {
+    setAutoLockSaving(true);
+    await sendMessage({ type: "SET_AUTO_LOCK", minutes });
+    setAutoLockMinutes(minutes);
+    setAutoLockSaving(false);
+  };
+
+  const handleAddEntry = async () => {
+    setAddrBookError("");
+    if (!newEntryAddr.startsWith(GONKA_BECH32_PREFIX) || newEntryAddr.length < 39) {
+      setAddrBookError("Invalid Gonka address");
+      return;
+    }
+    if (!newEntryName.trim()) {
+      setAddrBookError("Name is required");
+      return;
+    }
+    setAddingEntry(true);
+    const entry: AddressBookEntry = {
+      name: newEntryName.trim(),
+      address: newEntryAddr.trim(),
+      note: newEntryNote.trim() || undefined,
+    };
+    const resp = await sendMessage({ type: "ADD_ADDRESS_ENTRY", entry });
+    if (resp.entries) setAddressBook(resp.entries);
+    setNewEntryAddr("");
+    setNewEntryName("");
+    setNewEntryNote("");
+    setAddingEntry(false);
+  };
+
+  const handleRemoveEntry = async (addr: string) => {
+    const resp = await sendMessage({ type: "REMOVE_ADDRESS_ENTRY", address: addr });
+    if (resp.entries) setAddressBook(resp.entries);
+  };
 
   const loadConnectedSites = useCallback(() => {
     sendMessage({ type: "GET_CONNECTED_SITES" }).then((resp) => {
@@ -275,6 +336,64 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Address Book */}
+        <div>
+          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+            Address Book
+          </h3>
+          <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
+            <SettingsRow
+              label="Saved Addresses"
+              description={
+                addressBook.length === 0
+                  ? "No saved addresses"
+                  : `${addressBook.length} address${addressBook.length !== 1 ? "es" : ""} saved`
+              }
+              onClick={() => {
+                loadAddressBook();
+                setAddrBookModal(true);
+              }}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                </svg>
+              }
+            />
+          </div>
+        </div>
+
+        {/* Auto-Lock */}
+        <div>
+          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+            Auto-Lock
+          </h3>
+          <div className="card">
+            <p className="text-xs text-surface-500 mb-3">Lock wallet after period of inactivity</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "1 min", value: 1 },
+                { label: "5 min", value: 5 },
+                { label: "15 min", value: 15 },
+                { label: "30 min", value: 30 },
+                { label: "Never", value: 0 },
+              ].map(({ label, value }) => (
+                <button
+                  key={value}
+                  disabled={autoLockSaving}
+                  onClick={() => handleSaveAutoLock(value)}
+                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-full border transition-all duration-200 ${
+                    autoLockMinutes === value
+                      ? "bg-gonka-500/15 text-gonka-400 border-gonka-500/25"
+                      : "bg-white/[0.04] text-surface-400 border-transparent hover:bg-white/[0.06]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
         {/* Security */}
         <div>
           <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
@@ -350,7 +469,7 @@ export default function Settings() {
             About
           </h3>
           <div className="card text-xs text-surface-500 space-y-1.5">
-            <p className="text-surface-300 font-medium">GG Wallet v0.1.0</p>
+            <p className="text-surface-300 font-medium">GG Wallet v0.1.1</p>
             <p>Open-source, community wallet for the Gonka.ai blockchain</p>
             <div className="flex items-center gap-3 pt-1">
               <a
@@ -590,6 +709,104 @@ export default function Settings() {
           </div>
         </div>
       )}
+      {/* Address Book modal */}
+      {addrBookModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
+          <div className="w-full bg-surface-900 border-t border-white/[0.06] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[90%] flex flex-col">
+            <div className="flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold">Address Book</h3>
+              <button
+                onClick={() => {
+                  setAddrBookModal(false);
+                  setAddrBookError("");
+                  setNewEntryAddr("");
+                  setNewEntryName("");
+                  setNewEntryNote("");
+                }}
+                className="p-1.5 hover:bg-white/5 rounded-xl transition-colors"
+              >
+                <svg className="w-5 h-5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Saved entries */}
+            <div className="overflow-y-auto flex-1 space-y-1.5 -mx-1 px-1">
+              {addressBook.length === 0 ? (
+                <div className="text-center py-6">
+                  <p className="text-sm text-surface-500">No saved addresses yet</p>
+                  <p className="text-xs text-surface-600 mt-1">Add addresses below to quickly fill the Send form</p>
+                </div>
+              ) : (
+                addressBook.map((entry) => (
+                  <div
+                    key={entry.address}
+                    className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.02] border border-transparent"
+                  >
+                    <div className="w-8 h-8 rounded-xl bg-gonka-500/10 flex items-center justify-center shrink-0">
+                      <span className="text-sm font-bold text-gonka-400">
+                        {entry.name.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{entry.name}</p>
+                      <p className="text-[11px] font-mono text-surface-500 truncate">{entry.address}</p>
+                      {entry.note && (
+                        <p className="text-[11px] text-surface-600 truncate">{entry.note}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleRemoveEntry(entry.address)}
+                      className="shrink-0 px-2.5 py-1.5 text-[11px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Add new entry */}
+            <div className="border-t border-white/[0.04] pt-4 space-y-2 shrink-0">
+              <p className="text-xs font-medium text-surface-400">Add address</p>
+              <input
+                type="text"
+                className="input-field text-sm font-mono py-2.5"
+                placeholder="gonka1..."
+                value={newEntryAddr}
+                onChange={(e) => { setNewEntryAddr(e.target.value.trim()); setAddrBookError(""); }}
+              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input-field text-sm py-2.5 flex-1"
+                  placeholder="Name (required)"
+                  value={newEntryName}
+                  onChange={(e) => { setNewEntryName(e.target.value); setAddrBookError(""); }}
+                />
+                <input
+                  type="text"
+                  className="input-field text-sm py-2.5 flex-1"
+                  placeholder="Note (optional)"
+                  value={newEntryNote}
+                  onChange={(e) => setNewEntryNote(e.target.value)}
+                />
+              </div>
+              {addrBookError && <p className="text-xs text-red-400">{addrBookError}</p>}
+              <button
+                onClick={handleAddEntry}
+                disabled={addingEntry || !newEntryAddr || !newEntryName}
+                className="btn-secondary !py-2.5 text-sm flex items-center justify-center gap-2"
+              >
+                {addingEntry ? <Spinner size="sm" /> : null}
+                Save Address
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Connected sites modal */}
       {sitesModal && (
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">

@@ -1,6 +1,8 @@
 # GG Wallet
 
-> **Chrome Web Store:** Currently under review. The store link will be published here once approved. In the meantime, you can install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) or build from source.
+[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
+
+> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.1** with additional features (IBC token display, send IBC tokens, configurable auto-lock, address book).
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
 
@@ -12,7 +14,9 @@ A browser extension wallet built exclusively for the **Gonka blockchain** networ
 - **Staking** — delegate, undelegate, and claim rewards (feature disabled for now)
 - **QR Code** for receiving tokens
 - **Secure Storage** — mnemonic encrypted with AES-GCM (PBKDF2 key derivation)
-- **Auto-lock** after 5 minutes of inactivity
+- **IBC token support** — view and send IBC tokens alongside native GNK
+- **Address Book** — save frequent recipients, quick-fill the Send form
+- **Auto-lock** — configurable timeout (1 / 5 / 15 / 30 min or never)
 - **Private Key Export** — compatible with [opengnk](https://github.com/gonkalabs/opengnk) proxy
 - **Gonka Inference Signer** — TypeScript port of the opengnk signing scheme (RFC 6979 ECDSA)
 
@@ -88,9 +92,8 @@ src/
 
 ## Planned Features
 
-- **IBC token support** — display IBC tokens alongside native GNK
 - **Full-precision transaction amounts** — show exact amounts without rounding, even with many decimal places
-- **Staking** - re-enable delegation, undelegation, and reward claiming
+- **Staking** — re-enable delegation, undelegation, and reward claiming
 - **Governance** — view proposals, vote, and create new proposals
 
 ## API Key

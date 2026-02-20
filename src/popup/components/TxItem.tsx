@@ -1,16 +1,32 @@
 import { Transaction } from "@/lib/api";
-import { formatCompact, truncateAddress, formatTimestamp } from "@/lib/format";
-import { GONKA_EXPLORER_URL } from "@/lib/gonka";
+import { toDisplayDecimals, truncateAddress, formatTimestamp } from "@/lib/format";
+import { GONKA_EXPLORER_URL, GONKA_DECIMALS } from "@/lib/gonka";
 
 interface TxItemProps {
   tx: Transaction;
+  /** Optional map of denom → resolved symbol (e.g. "ibc/HASH" → "ATOM") */
+  symbolMap?: Record<string, string>;
 }
 
-export default function TxItem({ tx }: TxItemProps) {
+function resolveSymbol(denom: string, apiSymbol: string, symbolMap?: Record<string, string>): string {
+  if (symbolMap && symbolMap[denom]) return symbolMap[denom];
+  return apiSymbol;
+}
+
+function denomDecimals(denom: string): number {
+  if (denom === "ngonka") return GONKA_DECIMALS;
+  if (denom.startsWith("ibc/")) return 6;
+  return 0;
+}
+
+export default function TxItem({ tx, symbolMap }: TxItemProps) {
   const isSent = tx.direction === "sent";
   const isSelf = tx.direction === "self";
 
   const peerAddress = isSent ? tx.receiver : tx.sender;
+  const symbol = resolveSymbol(tx.denom, tx.tokenSymbol, symbolMap);
+  const decimals = denomDecimals(tx.denom);
+  const displayAmount = toDisplayDecimals(tx.amount, decimals);
 
   const handleClick = () => {
     if (tx.hash) {
@@ -57,6 +73,11 @@ export default function TxItem({ tx }: TxItemProps) {
             <span className="text-sm font-medium">
               {isSelf ? "Self" : isSent ? "Sent" : "Received"}
             </span>
+            {tx.isIbc && (
+              <span className="text-[10px] font-medium text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full">
+                IBC
+              </span>
+            )}
             <svg className="w-3 h-3 text-surface-600 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
             </svg>
@@ -67,7 +88,8 @@ export default function TxItem({ tx }: TxItemProps) {
             }`}
           >
             {isSent ? "-" : "+"}
-            {formatCompact(tx.amount, 4)}
+            {displayAmount}
+            <span className="ml-1 text-xs font-medium opacity-70">{symbol}</span>
           </span>
         </div>
         <div className="flex items-center justify-between mt-0.5">

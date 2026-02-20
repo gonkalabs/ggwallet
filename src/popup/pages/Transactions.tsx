@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useWalletStore } from "@/popup/store";
 import { fetchTransactions, Transaction } from "@/lib/api";
 import { getCache, setCache, cacheKey } from "@/lib/cache";
@@ -9,7 +9,15 @@ import Spinner from "@/popup/components/Spinner";
 type Filter = "all" | "sent" | "received";
 
 export default function Transactions() {
-  const { address } = useWalletStore();
+  const { address, tokenBalances } = useWalletStore();
+
+  const symbolMap = useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const t of tokenBalances) {
+      map[t.denom] = t.symbol;
+    }
+    return map;
+  }, [tokenBalances]);
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [hasCached, setHasCached] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -153,7 +161,7 @@ export default function Transactions() {
             <div className="card !p-2">
               <div className="space-y-0.5">
                 {txs.map((tx, i) => (
-                  <TxItem key={`${tx.hash}-${i}`} tx={tx} />
+                  <TxItem key={`${tx.hash}-${i}`} tx={tx} symbolMap={symbolMap} />
                 ))}
               </div>
             </div>

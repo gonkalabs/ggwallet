@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/popup/store";
 import { fetchTransactions, Transaction } from "@/lib/api";
@@ -11,7 +11,13 @@ import WalletSwitcher from "@/popup/components/WalletSwitcher";
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { address, balance, getBalance, activeIndex } = useWalletStore();
+  const { address, balance, tokenBalances, getBalance, activeIndex, isViewOnly } = useWalletStore();
+
+  const symbolMap = useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const t of tokenBalances) map[t.denom] = t.symbol;
+    return map;
+  }, [tokenBalances]);
 
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [hasCachedTxs, setHasCachedTxs] = useState(false);
@@ -29,12 +35,21 @@ export default function Dashboard() {
 
     // 1. Load from cache instantly
     const [cachedBal, cachedTxs] = await Promise.all([
-      getCache<string>(balKey),
+      getCache<{ balance: string; tokenBalances: typeof tokenBalances } | string>(balKey),
       getCache<Transaction[]>(txKey),
     ]);
 
     if (cachedBal) {
-      useWalletStore.setState({ balance: cachedBal.data });
+      // Handle both old cache format (plain string) and new format (object)
+      const cached = cachedBal.data;
+      if (typeof cached === "string") {
+        useWalletStore.setState({ balance: cached, tokenBalances: [] });
+      } else {
+        useWalletStore.setState({
+          balance: cached.balance ?? "0",
+          tokenBalances: cached.tokenBalances ?? [],
+        });
+      }
       setHasCachedBal(true);
     }
     if (cachedTxs && cachedTxs.data.length > 0) {
@@ -53,8 +68,9 @@ export default function Dashboard() {
           setHasCachedBal(true);
           setRefreshingBal(false);
           // Cache the fresh balance
-          const freshBalance = useWalletStore.getState().balance;
-          setCache(balKey, freshBalance);
+          const { balance: freshBalance, tokenBalances: freshTokenBalances } =
+            useWalletStore.getState();
+          setCache(balKey, { balance: freshBalance, tokenBalances: freshTokenBalances });
         }
       })
       .catch(() => {
@@ -98,16 +114,27 @@ export default function Dashboard() {
         {/* Balance */}
         <BalanceCard
           balance={balance}
+          tokenBalances={tokenBalances}
           address={address}
           loading={showBalSkeleton}
           refreshing={refreshingBal}
         />
 
         {/* Quick actions */}
+        {isViewOnly && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 animate-fade-in-up">
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.641 0-8.58-3.007-9.964-7.178z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Watch-only — cannot sign transactions
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 animate-fade-in-up" style={{ animationDelay: "0.05s", animationFillMode: "backwards" }}>
           <ActionButton
             label="Send"
             onClick={() => navigate("/send")}
+            disabled={isViewOnly}
             icon={
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
@@ -156,7 +183,7 @@ export default function Dashboard() {
             ) : (
               <div className="space-y-0.5">
                 {txs.map((tx) => (
-                  <TxItem key={tx.hash} tx={tx} />
+                  <TxItem key={tx.hash} tx={tx} symbolMap={symbolMap} />
                 ))}
               </div>
             )}
@@ -171,15 +198,18 @@ function ActionButton({
   label,
   onClick,
   icon,
+  disabled,
 }: {
   label: string;
   onClick: () => void;
   icon: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-center gap-1.5 py-3.5 bg-white/[0.03] hover:bg-gonka-500/[0.08] border border-transparent hover:border-gonka-500/[0.15] rounded-2xl transition-all duration-200 active:scale-[0.97]"
+      disabled={disabled}
+      className="flex flex-col items-center gap-1.5 py-3.5 bg-white/[0.03] hover:bg-gonka-500/[0.08] border border-transparent hover:border-gonka-500/[0.15] rounded-2xl transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/[0.03] disabled:hover:border-transparent"
     >
       <div className="text-gonka-400">{icon}</div>
       <span className="text-xs font-medium text-surface-300">{label}</span>

@@ -14,12 +14,14 @@ import { encrypt, decrypt } from "@/lib/crypto";
 import { storageGet, storageSet, storageRemove, KEYS, WalletEntry } from "@/lib/storage";
 import { deriveAddress, derivePrivateKey } from "@/lib/cosmos";
 
-const AUTO_LOCK_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_AUTO_LOCK_MINUTES = 5;
+let _autoLockMs = DEFAULT_AUTO_LOCK_MINUTES * 60 * 1000;
 
 let _mnemonic: string | null = null;
 let _password: string | null = null; // kept to decrypt when switching wallets
 let _address: string = "";
 let _activeIndex: number = 0;
+let _viewOnly: boolean = false;
 let _lockTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ------------------------------------------------------------------ //
@@ -74,20 +76,63 @@ export async function addWallet(
 }
 
 /**
- * Switch to a different wallet by index (must be unlocked).
+ * Add a watch-only wallet (address only, no mnemonic).
+ * Can be added while unlocked or without any prior wallet.
+ */
+export async function addViewOnlyWallet(
+  address: string,
+  name?: string
+): Promise<{ address: string; index: number }> {
+  const wallets = await getWallets();
+  const index = wallets.length;
+
+  const entry: WalletEntry = {
+    name: name || `Watch ${index + 1}`,
+    address,
+    ciphertext: "",
+    salt: "",
+    iv: "",
+    viewOnly: true,
+  };
+
+  wallets.push(entry);
+
+  await storageSet({
+    [KEYS.WALLETS]: wallets,
+    [KEYS.ACTIVE_INDEX]: index,
+    [KEYS.INITIALIZED]: true,
+  });
+
+  _mnemonic = null;
+  _viewOnly = true;
+  _address = address;
+  _activeIndex = index;
+  resetLockTimer();
+
+  return { address, index };
+}
+
+/**
+ * Switch to a different wallet by index (must be unlocked or switching to view-only).
  */
 export async function switchWallet(index: number): Promise<string> {
-  if (!_password) throw new Error("Wallet is locked");
-
   const wallets = await getWallets();
   if (index < 0 || index >= wallets.length) {
     throw new Error(`Invalid wallet index: ${index}`);
   }
 
   const entry = wallets[index];
-  const mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, _password);
 
-  _mnemonic = mnemonic;
+  if (entry.viewOnly) {
+    _mnemonic = null;
+    _viewOnly = true;
+  } else {
+    if (!_password) throw new Error("Wallet is locked");
+    const mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, _password);
+    _mnemonic = mnemonic;
+    _viewOnly = false;
+  }
+
   _address = entry.address;
   _activeIndex = index;
 
@@ -145,6 +190,7 @@ export async function removeWallet(index: number): Promise<void> {
 /**
  * Unlock all wallets using the shared password.
  * Decrypts the active wallet's mnemonic into memory.
+ * For view-only wallets with no regular wallets, no password is needed.
  */
 export async function unlock(password: string): Promise<string> {
   const wallets = await getWallets();
@@ -158,11 +204,22 @@ export async function unlock(password: string): Promise<string> {
   const activeIdx = (await storageGet<number>(KEYS.ACTIVE_INDEX)) ?? 0;
   const entry = wallets[activeIdx] || wallets[0];
 
-  // Decrypt — throws if password is wrong
-  const mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, password);
+  if (entry.viewOnly) {
+    // View-only wallet: verify password against first non-view-only wallet if one exists.
+    const regularWallet = wallets.find((w) => !w.viewOnly);
+    if (regularWallet) {
+      await decrypt(regularWallet.ciphertext, regularWallet.salt, regularWallet.iv, password);
+      _password = password;
+    }
+    _mnemonic = null;
+    _viewOnly = true;
+  } else {
+    const mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, password);
+    _mnemonic = mnemonic;
+    _password = password;
+    _viewOnly = false;
+  }
 
-  _mnemonic = mnemonic;
-  _password = password;
   _address = entry.address;
   _activeIndex = activeIdx;
   resetLockTimer();
@@ -176,6 +233,7 @@ export async function unlock(password: string): Promise<string> {
 export function lock(): void {
   _mnemonic = null;
   _password = null;
+  _viewOnly = false;
   clearLockTimer();
 }
 
@@ -193,7 +251,11 @@ export async function isInitialized(): Promise<boolean> {
 }
 
 export function isUnlocked(): boolean {
-  return _mnemonic !== null;
+  return _mnemonic !== null || _viewOnly;
+}
+
+export function isViewOnly(): boolean {
+  return _viewOnly;
 }
 
 export function getAddress(): string {
@@ -247,9 +309,26 @@ export async function exportPrivateKeyHex(): Promise<string> {
 
 function resetLockTimer(): void {
   clearLockTimer();
-  _lockTimer = setTimeout(() => {
-    lock();
-  }, AUTO_LOCK_MS);
+  if (_autoLockMs === 0) return; // "Never" mode
+  _lockTimer = setTimeout(() => lock(), _autoLockMs);
+}
+
+/** Load saved auto-lock setting from storage (called once on background start). */
+export async function loadSettings(): Promise<void> {
+  const minutes = await storageGet<number>(KEYS.AUTO_LOCK_MINUTES);
+  if (minutes !== undefined && minutes !== null) {
+    _autoLockMs = minutes === 0 ? 0 : minutes * 60 * 1000;
+  }
+}
+
+export function getAutoLockMinutes(): number {
+  return _autoLockMs === 0 ? 0 : Math.round(_autoLockMs / 60_000);
+}
+
+export async function setAutoLockTimeout(minutes: number): Promise<void> {
+  _autoLockMs = minutes === 0 ? 0 : minutes * 60 * 1000;
+  await storageSet({ [KEYS.AUTO_LOCK_MINUTES]: minutes });
+  if (_mnemonic !== null || _viewOnly) resetLockTimer();
 }
 
 function clearLockTimer(): void {

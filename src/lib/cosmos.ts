@@ -1,8 +1,19 @@
 import { StargateClient, SigningStargateClient, GasPrice, coin } from "@cosmjs/stargate";
 import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve, stringToPath } from "@cosmjs/crypto";
-import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE } from "./gonka";
+import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE, GONKA_DECIMALS, GONKA_DISPLAY_DENOM } from "./gonka";
 import { getActiveEndpoint } from "./rpc";
+
+export interface TokenBalance {
+  denom: string;
+  amount: string;
+  symbol: string;
+  decimals: number;
+  isIbc: boolean;
+}
+
+/** In-memory cache for resolved IBC denom traces (hash -> {symbol, decimals}). */
+const _ibcDenomCache = new Map<string, { symbol: string; decimals: number }>();
 
 let _client: StargateClient | null = null;
 let _clientRpc: string | null = null;
@@ -91,19 +102,101 @@ export async function queryBalance(address: string): Promise<string> {
 }
 
 /**
- * Send tokens from the wallet.
+ * Resolve an IBC denom hash to a human-readable symbol and decimals.
+ * Uses the active REST endpoint's denom trace API.
+ * Results are cached in memory for the lifetime of the service worker.
+ */
+export async function resolveIbcDenom(
+  ibcDenom: string
+): Promise<{ symbol: string; decimals: number }> {
+  const hash = ibcDenom.replace(/^ibc\//i, "");
+  if (_ibcDenomCache.has(hash)) return _ibcDenomCache.get(hash)!;
+
+  const fallback = { symbol: `IBC-${hash.slice(0, 4)}`, decimals: 6 };
+
+  try {
+    const { rest } = await getActiveEndpoint();
+    const resp = await fetch(
+      `${rest}ibc/apps/transfer/v1/denom_traces/${hash}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!resp.ok) {
+      _ibcDenomCache.set(hash, fallback);
+      return fallback;
+    }
+    const data = await resp.json();
+    const baseDenom: string = data.denom_trace?.base_denom || "";
+    // "uatom" -> "ATOM", "usdc" -> "USDC", anything else uppercased as-is
+    const symbol = baseDenom.startsWith("u")
+      ? baseDenom.slice(1).toUpperCase()
+      : baseDenom.toUpperCase() || fallback.symbol;
+    const resolved = { symbol, decimals: 6 };
+    _ibcDenomCache.set(hash, resolved);
+    return resolved;
+  } catch {
+    _ibcDenomCache.set(hash, fallback);
+    return fallback;
+  }
+}
+
+/**
+ * Query all token balances for an address (GNK + IBC tokens).
+ * Resolves IBC denom hashes to human-readable symbols via the REST endpoint.
+ */
+export async function queryAllBalances(address: string): Promise<TokenBalance[]> {
+  const client = await getClient();
+  const coins = await client.getAllBalances(address);
+
+  const results = await Promise.all(
+    coins.map(async (c): Promise<TokenBalance> => {
+      if (c.denom === GONKA_DENOM) {
+        return {
+          denom: c.denom,
+          amount: c.amount,
+          symbol: GONKA_DISPLAY_DENOM,
+          decimals: GONKA_DECIMALS,
+          isIbc: false,
+        };
+      }
+      if (c.denom.startsWith("ibc/")) {
+        const { symbol, decimals } = await resolveIbcDenom(c.denom);
+        return { denom: c.denom, amount: c.amount, symbol, decimals, isIbc: true };
+      }
+      // Unknown native denom
+      return {
+        denom: c.denom,
+        amount: c.amount,
+        symbol: c.denom.toUpperCase(),
+        decimals: 0,
+        isIbc: false,
+      };
+    })
+  );
+
+  // GNK first, then IBC tokens, then others
+  return results.sort((a, b) => {
+    if (!a.isIbc && !b.isIbc) return 0;
+    if (!a.isIbc) return -1;
+    if (!b.isIbc) return 1;
+    return a.symbol.localeCompare(b.symbol);
+  });
+}
+
+/**
+ * Send tokens from the wallet. Defaults to native GNK but accepts any denom (IBC included).
  */
 export async function sendTokens(
   mnemonic: string,
   recipientAddress: string,
   amount: string,
+  denom: string = GONKA_DENOM,
   memo = ""
 ): Promise<{ txHash: string; height: number }> {
   const { client, address } = await getSigningClient(mnemonic);
   const result = await client.sendTokens(
     address,
     recipientAddress,
-    [coin(amount, GONKA_DENOM)],
+    [coin(amount, denom)],
     "auto",
     memo
   );

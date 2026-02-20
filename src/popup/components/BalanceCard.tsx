@@ -1,19 +1,29 @@
 import { useState } from "react";
-import { toDisplay } from "@/lib/format";
+import { toDisplay, toDisplayDecimals } from "@/lib/format";
 import { GONKA_DISPLAY_DENOM } from "@/lib/gonka";
+import type { TokenBalance } from "@/lib/cosmos";
 import Spinner from "@/popup/components/Spinner";
 
 interface BalanceCardProps {
   balance: string;
+  tokenBalances: TokenBalance[];
   address: string;
   loading?: boolean;
   /** Show a subtle refresh indicator while fetching fresh data in background */
   refreshing?: boolean;
 }
 
-export default function BalanceCard({ balance, address, loading, refreshing }: BalanceCardProps) {
+export default function BalanceCard({
+  balance,
+  tokenBalances,
+  address,
+  loading,
+  refreshing,
+}: BalanceCardProps) {
   const displayAmount = toDisplay(balance);
   const [copied, setCopied] = useState(false);
+
+  const ibcTokens = tokenBalances.filter((t) => t.isIbc);
 
   const handleCopyAddress = () => {
     navigator.clipboard.writeText(address);
@@ -37,20 +47,38 @@ export default function BalanceCard({ balance, address, loading, refreshing }: B
           )}
         </div>
 
-        <div className="flex items-baseline gap-2 mb-4">
+        {/* GNK balance — primary */}
+        <div className="flex items-baseline gap-2 mb-3">
           {loading ? (
             <div className="h-9 w-36 bg-white/5 rounded-xl animate-pulse" />
           ) : (
             <>
-              <span className="text-3xl font-extrabold tracking-tight">
-                {displayAmount}
-              </span>
-              <span className="text-sm font-semibold text-gonka-400">
-                {GONKA_DISPLAY_DENOM}
-              </span>
+              <span className="text-3xl font-extrabold tracking-tight">{displayAmount}</span>
+              <span className="text-sm font-semibold text-gonka-400">{GONKA_DISPLAY_DENOM}</span>
             </>
           )}
         </div>
+
+        {/* IBC token balances */}
+        {!loading && ibcTokens.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {ibcTokens.map((t) => (
+              <div
+                key={t.denom}
+                className="flex items-baseline gap-1 px-2.5 py-1 rounded-xl bg-white/[0.04] border border-white/[0.06]"
+                title={t.denom}
+              >
+                <span className="text-sm font-semibold text-surface-200">
+                  {toDisplayDecimals(t.amount, t.decimals)}
+                </span>
+                <span className="text-xs font-medium text-surface-500">{t.symbol}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {loading && (
+          <div className="h-6 w-24 bg-white/5 rounded-xl animate-pulse mb-3" />
+        )}
 
         <button
           onClick={handleCopyAddress}
@@ -59,7 +87,13 @@ export default function BalanceCard({ balance, address, loading, refreshing }: B
         >
           <span className="font-mono truncate max-w-[240px]">{address}</span>
           {copied ? (
-            <svg className="w-3.5 h-3.5 text-gonka-400 shrink-0 transition-transform duration-200 scale-110" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg
+              className="w-3.5 h-3.5 text-gonka-400 shrink-0 transition-transform duration-200 scale-110"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           ) : (
@@ -70,7 +104,11 @@ export default function BalanceCard({ balance, address, loading, refreshing }: B
               stroke="currentColor"
               strokeWidth={2}
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9.75a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"
+              />
             </svg>
           )}
         </button>

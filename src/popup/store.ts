@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { sendMessage } from "@/lib/messaging";
+import type { TokenBalance } from "@/lib/cosmos";
 
 export interface WalletInfo {
   name: string;
@@ -10,8 +11,10 @@ export interface WalletInfo {
 interface WalletState {
   isInitialized: boolean;
   isUnlocked: boolean;
+  isViewOnly: boolean;
   address: string;
   balance: string;
+  tokenBalances: TokenBalance[];
   mnemonic: string | null;
   wallets: WalletInfo[];
   activeIndex: number;
@@ -22,6 +25,7 @@ interface WalletState {
   createWallet: (mnemonic: string, password: string, name?: string) => Promise<boolean>;
   importWallet: (mnemonic: string, password: string, name?: string) => Promise<boolean>;
   addWallet: (mnemonic: string, password: string, name?: string) => Promise<boolean>;
+  addViewOnlyWallet: (address: string, name?: string) => Promise<boolean>;
   switchWallet: (index: number) => Promise<boolean>;
   renameWallet: (index: number, name: string) => Promise<void>;
   removeWallet: (index: number) => Promise<boolean>;
@@ -34,8 +38,10 @@ interface WalletState {
 export const useWalletStore = create<WalletState>((set, get) => ({
   isInitialized: false,
   isUnlocked: false,
+  isViewOnly: false,
   address: "",
   balance: "0",
+  tokenBalances: [],
   mnemonic: null,
   wallets: [],
   activeIndex: 0,
@@ -45,6 +51,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     set({
       isInitialized: resp.isInitialized,
       isUnlocked: resp.isUnlocked,
+      isViewOnly: resp.isViewOnly ?? false,
       address: resp.address || "",
       wallets: resp.wallets || [],
       activeIndex: resp.activeIndex ?? 0,
@@ -56,6 +63,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     if (resp.success) {
       set({
         isUnlocked: true,
+        isViewOnly: resp.isViewOnly ?? false,
         address: resp.address,
         wallets: resp.wallets || [],
         activeIndex: resp.activeIndex ?? 0,
@@ -131,10 +139,32 @@ export const useWalletStore = create<WalletState>((set, get) => ({
     return false;
   },
 
+  addViewOnlyWallet: async (address, name) => {
+    const resp = await sendMessage({ type: "ADD_VIEW_ONLY_WALLET", address, name });
+    if (resp.success) {
+      set({
+        address: resp.address,
+        activeIndex: resp.index ?? 0,
+        balance: "0",
+        tokenBalances: [],
+        isViewOnly: true,
+      });
+      await get().refreshWallets();
+      return true;
+    }
+    return false;
+  },
+
   switchWallet: async (index: number) => {
     const resp = await sendMessage({ type: "SWITCH_WALLET", index });
     if (resp.success) {
-      set({ address: resp.address, activeIndex: index, balance: "0" });
+      set({
+        address: resp.address,
+        activeIndex: index,
+        balance: "0",
+        tokenBalances: [],
+        isViewOnly: resp.isViewOnly ?? false,
+      });
       return true;
     }
     return false;
@@ -170,7 +200,7 @@ export const useWalletStore = create<WalletState>((set, get) => ({
   getBalance: async () => {
     const resp = await sendMessage({ type: "GET_BALANCE" });
     if (resp.balance !== undefined) {
-      set({ balance: resp.balance });
+      set({ balance: resp.balance, tokenBalances: resp.tokenBalances ?? [] });
     }
   },
 

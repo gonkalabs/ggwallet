@@ -5,7 +5,7 @@ import { sendMessage } from "@/lib/messaging";
 import Layout from "@/popup/components/Layout";
 import Spinner from "@/popup/components/Spinner";
 
-type Step = "choose" | "create" | "import";
+type Step = "choose" | "create" | "import" | "watch";
 
 export default function AddWallet() {
   const navigate = useNavigate();
@@ -13,10 +13,13 @@ export default function AddWallet() {
   const [step, setStep] = useState<Step>("choose");
   const [mnemonic, setMnemonic] = useState("");
   const [importInput, setImportInput] = useState("");
+  const [watchAddress, setWatchAddress] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
+
+  const { addViewOnlyWallet } = useWalletStore();
 
   const handleCreate = async () => {
     setGenerating(true);
@@ -110,6 +113,12 @@ export default function AddWallet() {
             >
               Import Existing Wallet
             </button>
+            <button
+              onClick={() => setStep("watch")}
+              className="btn-secondary"
+            >
+              Watch Address
+            </button>
           </div>
         </div>
       </Layout>
@@ -164,6 +173,94 @@ export default function AddWallet() {
             className="btn-secondary"
           >
             Cancel
+          </button>
+        </div>
+      </Layout>
+    );
+  }
+
+  // Step: watch-only address
+  if (step === "watch") {
+    const handleWatchSubmit = async () => {
+      const addr = watchAddress.trim();
+      if (!addr.startsWith("gonka1") || addr.length < 20) {
+        setError("Please enter a valid Gonka address (starts with gonka1)");
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const ok = await addViewOnlyWallet(addr, name || undefined);
+        if (ok) {
+          navigate("/");
+        } else {
+          setError("Failed to add watch address");
+        }
+      } catch (e: any) {
+        setError(e.message || "Failed to add watch address");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    return (
+      <Layout title="Watch Address" showBack={false} showNav={false}>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <p className="text-xs text-surface-500">
+            Track any Gonka address without importing its private key. You can view balances and
+            transactions, but not sign or send.
+          </p>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-surface-300">
+                Wallet Name <span className="text-surface-600">(optional)</span>
+              </label>
+              <input
+                type="text"
+                className="input-field"
+                placeholder="e.g. Team Wallet, Observed..."
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-surface-300">Gonka Address</label>
+              <input
+                type="text"
+                className="input-field font-mono text-sm"
+                placeholder="gonka1..."
+                value={watchAddress}
+                onChange={(e) => {
+                  setWatchAddress(e.target.value);
+                  setError("");
+                }}
+                autoFocus
+              />
+            </div>
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+        </div>
+        <div className="px-4 py-3 space-y-2 shrink-0">
+          <button
+            onClick={handleWatchSubmit}
+            disabled={!watchAddress.trim() || loading}
+            className="btn-primary flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <>
+                <Spinner size="sm" />
+                Adding...
+              </>
+            ) : (
+              "Watch Address"
+            )}
+          </button>
+          <button
+            onClick={() => { setStep("choose"); setError(""); }}
+            disabled={loading}
+            className="btn-secondary"
+          >
+            Back
           </button>
         </div>
       </Layout>

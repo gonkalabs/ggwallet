@@ -91,14 +91,18 @@ function normalizeItem(item: any, walletAddress: string): Transaction {
   const sender: string = item.sender || item.message_sender || "";
   const receiver: string = item.receiver || "";
 
-  // Parse amount — comes as "10000000 ngonka"
+  // Parse amount — comes as "10000000 ngonka" or "5000000 ibc/HASH..."
   let amount = "0";
   let denom = "ngonka";
   const amountRaw: string = item.amount || "";
   if (amountRaw) {
-    const parts = amountRaw.toString().split(" ");
-    amount = parts[0] || "0";
-    denom = parts[1] || "ngonka";
+    const spaceIdx = amountRaw.toString().indexOf(" ");
+    if (spaceIdx > 0) {
+      amount = amountRaw.slice(0, spaceIdx);
+      denom = amountRaw.slice(spaceIdx + 1);
+    } else {
+      amount = amountRaw.toString();
+    }
   }
 
   // Determine direction from API's direction field ("in"/"out") or tx_type
@@ -129,7 +133,8 @@ function normalizeItem(item: any, walletAddress: string): Transaction {
     gasUsed: item.gas_used || 0,
     gasWanted: item.gas_wanted || 0,
     memo: item.memo || "",
-    tokenSymbol: item.token_symbol || "GNK",
-    isIbc: item.is_ibc === true,
+    // Derive symbol from denom — API's token_symbol is unreliable for IBC tokens
+    tokenSymbol: denom.startsWith("ibc/") ? `IBC-${denom.slice(4, 8)}` : (item.token_symbol || "GNK"),
+    isIbc: denom.startsWith("ibc/") || item.is_ibc === true,
   };
 }

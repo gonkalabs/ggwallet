@@ -11,6 +11,10 @@ const KEYS = {
   INITIALIZED: "gg_initialized",
   /** Connected dApp origins: ConnectedSite[] */
   CONNECTED_SITES: "gg_connected_sites",
+  /** Auto-lock timeout in minutes (0 = never) */
+  AUTO_LOCK_MINUTES: "gg_auto_lock_minutes",
+  /** Address book entries: AddressBookEntry[] */
+  ADDRESS_BOOK: "gg_address_book",
 
   // --- Legacy single-wallet keys (migration) ---
   ENCRYPTED_MNEMONIC: "gg_encrypted_mnemonic",
@@ -33,6 +37,7 @@ export interface ConnectedSite {
 
 /**
  * A single wallet entry stored encrypted.
+ * For watch-only wallets, viewOnly is true and ciphertext/salt/iv are empty strings.
  */
 export interface WalletEntry {
   name: string;
@@ -40,6 +45,13 @@ export interface WalletEntry {
   ciphertext: string;
   salt: string;
   iv: string;
+  viewOnly?: boolean;
+}
+
+export interface AddressBookEntry {
+  name: string;
+  address: string;
+  note?: string;
 }
 
 export { KEYS };
