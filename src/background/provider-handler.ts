@@ -38,10 +38,29 @@ const GONKA_HD: HdPath = [
 ];
 
 // ------------------------------------------------------------------
-//  Suggested chains store (in-memory, non-persistent)
+//  Suggested chains store — persisted to storage so they survive
+//  service worker restarts.
 // ------------------------------------------------------------------
 
 const _suggestedChains = new Map<string, any>();
+
+async function loadSuggestedChains(): Promise<void> {
+  const stored = await storageGet<Record<string, any>>(KEYS.SUGGESTED_CHAINS);
+  if (stored) {
+    for (const [chainId, info] of Object.entries(stored)) {
+      _suggestedChains.set(chainId, info);
+    }
+  }
+}
+
+async function persistSuggestedChain(chainId: string, chainInfo: any): Promise<void> {
+  const stored = (await storageGet<Record<string, any>>(KEYS.SUGGESTED_CHAINS)) || {};
+  stored[chainId] = chainInfo;
+  await storageSet({ [KEYS.SUGGESTED_CHAINS]: stored });
+}
+
+// Load on module init (service worker startup)
+loadSuggestedChains();
 
 // ------------------------------------------------------------------
 //  Pending approval requests
@@ -281,19 +300,99 @@ export async function handleProviderRequest(
       case "signArbitrary":
         return await handleWithApproval("signArbitrary", params, origin);
 
-      // --- Methods that don't need approval ---
+      // --- Methods that don't need approval but do need unlock ---
       case "getKey":
-        return await executeGetKey(params);
+        return await handleGetKey(params, origin);
       case "sendTx":
         return await executeSendTx(params);
       case "experimentalSuggestChain":
-        return executeSuggestChain(params);
+        return await executeSuggestChain(params);
       default:
         return { error: `Unsupported method: ${method}` };
     }
   } catch (err: any) {
     return { error: err.message || String(err) };
   }
+}
+
+// ------------------------------------------------------------------
+//  Unlock gate
+//
+//  When a dApp request arrives while the wallet is locked, we open the
+//  extension popup and suspend the request until the user unlocks.
+//
+//  The unlock context (origin, method) is persisted in session storage
+//  so the popup can display it even if the service worker restarts while
+//  the user is typing their password. In-memory resolvers handle the
+//  common case where the SW stays alive; the content script's locked-request
+//  queue handles the fallback case where it doesn't.
+// ------------------------------------------------------------------
+
+const UNLOCK_CONTEXT_KEY = "gg_pending_unlock_context";
+
+type UnlockResolver = { resolve: () => void; reject: (e: Error) => void };
+const _unlockWaiters: Set<UnlockResolver> = new Set();
+
+/**
+ * Called by the background index after a successful UNLOCK message.
+ * Resolves all pending requestUnlock() promises so dApp requests continue.
+ */
+export function notifyUnlocked(): void {
+  for (const waiter of _unlockWaiters) {
+    waiter.resolve();
+  }
+  _unlockWaiters.clear();
+  // Clear stored context
+  chrome.storage.session.remove(UNLOCK_CONTEXT_KEY).catch(() => {});
+}
+
+/**
+ * Store unlock context so the popup can read it even after a SW restart.
+ */
+async function storeUnlockContext(origin?: string, method?: string): Promise<void> {
+  await chrome.storage.session.set({
+    [UNLOCK_CONTEXT_KEY]: { origin: origin || "", method: method || "" },
+  }).catch(() => {});
+}
+
+/**
+ * Open the extension popup so the user can unlock the wallet, then wait
+ * until notifyUnlocked() is called (i.e. UNLOCK succeeds in the background).
+ *
+ * @param origin  The dApp origin requesting access (shown in the popup).
+ * @param method  The API method being requested (shown in the popup).
+ */
+function requestUnlock(origin?: string, method?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const waiter: UnlockResolver = { resolve, reject };
+
+    // Wrap resolve/reject to clear the 5-min timeout
+    let timer: ReturnType<typeof setTimeout>;
+    waiter.resolve = () => { clearTimeout(timer); resolve(); };
+    waiter.reject  = (e) => { clearTimeout(timer); reject(e); };
+
+    _unlockWaiters.add(waiter);
+
+    // Persist context for the popup to read (survives SW restarts)
+    storeUnlockContext(origin, method).then(() => {
+      // Always open a standalone popup window — chrome.action.openPopup()
+      // requires a user gesture and never works from a background script.
+      const popupUrl = chrome.runtime.getURL("src/popup/index.html");
+      chrome.windows.create(
+        { url: popupUrl, type: "popup", width: 400, height: 630, focused: true },
+        () => {},
+      );
+    });
+
+    // Timeout after 5 minutes
+    timer = setTimeout(() => {
+      if (_unlockWaiters.has(waiter)) {
+        _unlockWaiters.delete(waiter);
+        chrome.storage.session.remove(UNLOCK_CONTEXT_KEY).catch(() => {});
+        reject(new Error("Wallet unlock timed out"));
+      }
+    }, 5 * 60 * 1000);
+  });
 }
 
 // ------------------------------------------------------------------
@@ -306,7 +405,11 @@ async function handleWithApproval(
   origin?: string,
 ): Promise<{ result?: any; error?: string }> {
   if (!isUnlocked()) {
-    return { error: "Wallet is locked. Please unlock GG Wallet first." };
+    try {
+      await requestUnlock(origin, method);
+    } catch (err: any) {
+      return { error: "Wallet is locked. Please unlock GG Wallet first." };
+    }
   }
   return requestApproval(method, params, origin || "unknown");
 }
@@ -319,8 +422,20 @@ async function handleEnable(
   params: { chainIds: string[] },
   origin?: string,
 ): Promise<{ result?: any; error?: string }> {
+  // If this origin is already connected for all requested chains, approve
+  // immediately — no unlock required. The stored connection grant is
+  // persistent and survives service worker restarts.
+  if (origin && await isOriginConnected(origin, params.chainIds)) {
+    return { result: true };
+  }
+
+  // New connection request — wallet must be unlocked to proceed
   if (!isUnlocked()) {
-    return { error: "Wallet is locked. Please unlock GG Wallet first." };
+    try {
+      await requestUnlock();
+    } catch {
+      return { error: "Wallet is locked. Please unlock GG Wallet first." };
+    }
   }
 
   for (const chainId of params.chainIds) {
@@ -329,12 +444,7 @@ async function handleEnable(
     }
   }
 
-  // Auto-approve if the origin is already connected for all requested chains
-  if (origin && await isOriginConnected(origin, params.chainIds)) {
-    return { result: true };
-  }
-
-  // Otherwise, request approval via popup
+  // Request approval via popup
   return requestApproval("enable", params, origin || "unknown");
 }
 
@@ -352,6 +462,17 @@ async function executeEnable(
   return { result: true };
 }
 
+async function handleGetKey(params: { chainId: string }, origin?: string): Promise<{ result?: any; error?: string }> {
+  if (!isUnlocked()) {
+    try {
+      await requestUnlock(origin, "getKey");
+    } catch {
+      return { error: "Wallet is locked. Please unlock GG Wallet first." };
+    }
+  }
+  return executeGetKey(params);
+}
+
 async function executeGetKey(params: { chainId: string }): Promise<{ result?: any; error?: string }> {
   if (!isUnlocked()) return { error: "Wallet is locked" };
 
@@ -363,12 +484,15 @@ async function executeGetKey(params: { chainId: string }): Promise<{ result?: an
   const currentWallet = wallets.find((w) => w.address === address);
   const name = currentWallet?.name || "GG Wallet";
 
+  const pubKeyArray = Array.from(account.pubkey);
+  const addressArray = Array.from(fromBech32(account.address).data);
+
   return {
     result: {
       name,
       algo: account.algo,
-      pubKey: Array.from(account.pubkey),
-      address: Array.from(fromBech32(account.address).data),
+      pubKey: pubKeyArray,
+      address: addressArray,
       bech32Address: account.address,
       ethereumHexAddress: "",
       isNanoLedger: false,
@@ -395,24 +519,48 @@ async function executeSignAmino(params: {
     return { error: `Signer address mismatch: expected ${account.address}, got ${params.signer}` };
   }
 
-  const signDoc = params.signDoc;
-  const serialized = serializeSignDoc(signDoc);
-  const hash = sha256(serialized);
+  // Normalize the sign doc — postMessage serialization can turn arrays into
+  // objects with numeric keys; serializeSignDoc requires real arrays.
+  const signDoc = normalizeAminoSignDoc(params.signDoc);
 
-  const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
-  const signature = await Secp256k1.createSignature(hash, privKey);
-  const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+  try {
+    const serialized = serializeSignDoc(signDoc);
+    const hash = sha256(serialized);
 
-  return {
-    result: {
-      signed: signDoc,
-      signature: {
-        pub_key: {
-          type: "tendermint/PubKeySecp256k1",
-          value: toBase64(account.pubkey),
+    const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
+    const signature = await Secp256k1.createSignature(hash, privKey);
+    const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+
+    return {
+      result: {
+        signed: signDoc,
+        signature: {
+          pub_key: {
+            type: "tendermint/PubKeySecp256k1",
+            value: toBase64(account.pubkey),
+          },
+          signature: toBase64(signatureBytes),
         },
-        signature: toBase64(signatureBytes),
       },
+    };
+  } catch (err: any) {
+    return { error: err.message || String(err) };
+  }
+}
+
+/**
+ * Normalize an Amino sign doc that may have been mangled by postMessage
+ * serialization (Uint8Arrays / arrays become plain objects with numeric keys).
+ */
+function normalizeAminoSignDoc(doc: any): any {
+  return {
+    ...doc,
+    msgs: Array.isArray(doc.msgs) ? doc.msgs : Object.values(doc.msgs ?? {}),
+    fee: {
+      ...doc.fee,
+      amount: Array.isArray(doc.fee?.amount)
+        ? doc.fee.amount
+        : Object.values(doc.fee?.amount ?? {}),
     },
   };
 }
@@ -435,40 +583,64 @@ async function executeSignDirect(params: {
     return { error: `Signer address mismatch: expected ${account.address}, got ${params.signer}` };
   }
 
-  const bodyBytes = new Uint8Array(params.signDoc.bodyBytes || []);
-  const authInfoBytes = new Uint8Array(params.signDoc.authInfoBytes || []);
+  // postMessage serialization can turn Uint8Arrays into objects with numeric
+  // keys — coerce them back to Uint8Array via toUint8ArrayFromAny.
+  const bodyBytes = toUint8ArrayFromAny(params.signDoc.bodyBytes);
+  const authInfoBytes = toUint8ArrayFromAny(params.signDoc.authInfoBytes);
 
-  const signDoc = SignDoc.fromPartial({
-    bodyBytes,
-    authInfoBytes,
-    chainId: params.signDoc.chainId || params.chainId,
-    accountNumber: BigInt(params.signDoc.accountNumber || "0"),
-  });
+  try {
+    const signDoc = SignDoc.fromPartial({
+      bodyBytes,
+      authInfoBytes,
+      chainId: params.signDoc.chainId || params.chainId,
+      accountNumber: BigInt(params.signDoc.accountNumber || "0"),
+    });
 
-  const signBytes = SignDoc.encode(signDoc).finish();
-  const hash = sha256(signBytes);
+    const signBytes = SignDoc.encode(signDoc).finish();
+    const hash = sha256(signBytes);
 
-  const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
-  const signature = await Secp256k1.createSignature(hash, privKey);
-  const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+    const privKey = await derivePrivateKeyBytes(mnemonic, params.chainId);
+    const signature = await Secp256k1.createSignature(hash, privKey);
+    const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
 
-  return {
-    result: {
-      signed: {
-        bodyBytes: Array.from(bodyBytes),
-        authInfoBytes: Array.from(authInfoBytes),
-        chainId: signDoc.chainId,
-        accountNumber: params.signDoc.accountNumber?.toString() || "0",
-      },
-      signature: {
-        pub_key: {
-          type: "tendermint/PubKeySecp256k1",
-          value: toBase64(account.pubkey),
+    return {
+      result: {
+        signed: {
+          bodyBytes: Array.from(bodyBytes),
+          authInfoBytes: Array.from(authInfoBytes),
+          chainId: signDoc.chainId,
+          accountNumber: params.signDoc.accountNumber?.toString() || "0",
         },
-        signature: toBase64(signatureBytes),
+        signature: {
+          pub_key: {
+            type: "tendermint/PubKeySecp256k1",
+            value: toBase64(account.pubkey),
+          },
+          signature: toBase64(signatureBytes),
+        },
       },
-    },
-  };
+    };
+  } catch (err: any) {
+    return { error: err.message || String(err) };
+  }
+}
+
+/**
+ * Coerce any array-like value (plain array, object with numeric keys,
+ * Uint8Array, Buffer-style {type,data}) into a Uint8Array.
+ */
+function toUint8ArrayFromAny(data: any): Uint8Array {
+  if (!data) return new Uint8Array(0);
+  if (data instanceof Uint8Array) return data;
+  if (Array.isArray(data)) return new Uint8Array(data);
+  if (data.type === "Buffer" && Array.isArray(data.data)) return new Uint8Array(data.data);
+  if (typeof data === "object") {
+    const keys = Object.keys(data);
+    if (keys.length > 0 && keys.every((k) => !isNaN(Number(k)))) {
+      return new Uint8Array(keys.sort((a, b) => Number(a) - Number(b)).map((k) => data[k]));
+    }
+  }
+  return new Uint8Array(0);
 }
 
 async function executeSendTx(params: {
@@ -509,12 +681,13 @@ async function executeSendTx(params: {
   return { result: Array.from(hashBytes) };
 }
 
-function executeSuggestChain(params: { chainInfo: any }): { result?: any; error?: string } {
+async function executeSuggestChain(params: { chainInfo: any }): Promise<{ result?: any; error?: string }> {
   const chainInfo = params.chainInfo;
   if (!chainInfo || !chainInfo.chainId) {
     return { error: "Invalid chain info: missing chainId" };
   }
   _suggestedChains.set(chainInfo.chainId, chainInfo);
+  await persistSuggestedChain(chainInfo.chainId, chainInfo);
   return { result: true };
 }
 

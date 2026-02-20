@@ -3,7 +3,6 @@
  *
  * Exposes a Keplr-compatible API at:
  *   - window.gonkaWallet  (primary)
- *   - window.keplr        (compatibility — only set if not already present)
  *
  * Also provides convenience helpers:
  *   - window.getOfflineSigner(chainId)
@@ -32,7 +31,7 @@ interface Key {
 interface AccountData {
   readonly address: string;
   readonly algo: string;
-  readonly pubKey: Uint8Array;
+  readonly pubkey: Uint8Array; // lowercase — matches CosmJS AccountData interface
 }
 
 interface AminoSignResponse {
@@ -79,13 +78,37 @@ const CHANNEL = "gonka-wallet-provider";
 let _reqId = 0;
 const _pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
+/**
+ * Deep-serialize params for postMessage / chrome.runtime.sendMessage.
+ * Converts Uint8Array → plain number[], BigInt → string, and handles
+ * protobuf Long objects so nothing non-serializable slips through.
+ */
+function serializeParams(value: any): any {
+  if (value === null || value === undefined) return value;
+  if (value instanceof Uint8Array) return Array.from(value);
+  if (typeof value === "bigint") return value.toString();
+  // Protobuf Long (has low/high/unsigned fields)
+  if (typeof value === "object" && typeof value.low === "number" && typeof value.high === "number") {
+    return value.toString ? value.toString() : String(value.low + value.high * 0x100000000);
+  }
+  if (Array.isArray(value)) return value.map(serializeParams);
+  if (typeof value === "object") {
+    const out: Record<string, any> = {};
+    for (const key of Object.keys(value)) {
+      out[key] = serializeParams(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
 /** Send a request to the content script and wait for a response. */
 function sendProviderRequest(method: string, params: any = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = ++_reqId;
     _pending.set(id, { resolve, reject });
     window.postMessage(
-      { channel: CHANNEL, direction: "to-content", id, method, params },
+      { channel: CHANNEL, direction: "to-content", id, method, params: serializeParams(params) },
       "*",
     );
 
@@ -152,7 +175,7 @@ class GonkaOfflineSigner {
       {
         address: key.bech32Address,
         algo: key.algo as string,
-        pubKey: key.pubKey,
+        pubkey: key.pubKey, // lowercase — CosmJS AccountData interface
       },
     ];
   }
@@ -178,7 +201,7 @@ class GonkaOfflineSignerOnlyAmino {
       {
         address: key.bech32Address,
         algo: key.algo as string,
-        pubKey: key.pubKey,
+        pubkey: key.pubKey, // lowercase — CosmJS AccountData interface
       },
     ];
   }
@@ -220,11 +243,13 @@ const gonkaWalletProvider = {
    */
   async getKey(chainId: string): Promise<Key> {
     const result = await sendProviderRequest("getKey", { chainId });
+    const pubKey = toUint8Array(result.pubKey);
+    const address = toUint8Array(result.address);
     return {
       name: result.name || "",
       algo: result.algo || "secp256k1",
-      pubKey: toUint8Array(result.pubKey),
-      address: toUint8Array(result.address),
+      pubKey,
+      address,
       bech32Address: result.bech32Address || "",
       ethereumHexAddress: result.ethereumHexAddress || "",
       isNanoLedger: false,
@@ -253,22 +278,23 @@ const gonkaWalletProvider = {
     signDoc: any,
     signOptions?: KeplrSignOptions,
   ): Promise<DirectSignResponse> {
-    // Convert Uint8Array fields to regular arrays for serialization
-    const serializedSignDoc = {
-      ...signDoc,
-      bodyBytes: signDoc.bodyBytes instanceof Uint8Array
-        ? Array.from(signDoc.bodyBytes)
-        : signDoc.bodyBytes,
-      authInfoBytes: signDoc.authInfoBytes instanceof Uint8Array
-        ? Array.from(signDoc.authInfoBytes)
-        : signDoc.authInfoBytes,
-    };
-    return sendProviderRequest("signDirect", {
+    // serializeParams() in sendProviderRequest handles all Uint8Array/BigInt/Long conversion
+    const result = await sendProviderRequest("signDirect", {
       chainId,
       signer,
-      signDoc: serializedSignDoc,
+      signDoc,
       signOptions,
     });
+    // Reconstruct Uint8Arrays — the signed bytes travel through JSON serialization
+    // and must be restored before the dApp can use them with protobuf encoding.
+    return {
+      ...result,
+      signed: {
+        ...result.signed,
+        bodyBytes: toUint8Array(result.signed?.bodyBytes),
+        authInfoBytes: toUint8Array(result.signed?.authInfoBytes),
+      },
+    };
   },
 
   /**
@@ -277,7 +303,7 @@ const gonkaWalletProvider = {
   async sendTx(chainId: string, tx: Uint8Array, mode: string): Promise<Uint8Array> {
     const result = await sendProviderRequest("sendTx", {
       chainId,
-      tx: Array.from(tx),
+      tx,
       mode,
     });
     return toUint8Array(result);
@@ -313,8 +339,7 @@ const gonkaWalletProvider = {
     signer: string,
     data: string | Uint8Array,
   ): Promise<{ pub_key: { type: string; value: string }; signature: string }> {
-    const serializedData = data instanceof Uint8Array ? Array.from(data) : data;
-    return sendProviderRequest("signArbitrary", { chainId, signer, data: serializedData });
+    return sendProviderRequest("signArbitrary", { chainId, signer, data });
   },
 
   /**

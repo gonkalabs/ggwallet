@@ -24,6 +24,7 @@ import {
   loadSettings,
   getAutoLockMinutes,
   setAutoLockTimeout,
+  checkAlarmLock,
 } from "./keystore";
 import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
 import { queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient } from "@/lib/cosmos";
@@ -35,6 +36,7 @@ import {
   getPendingRequest,
   approveRequest,
   rejectRequest,
+  notifyUnlocked,
 } from "./provider-handler";
 
 // Notify all content scripts about keystore changes (Keplr compatibility).
@@ -53,13 +55,19 @@ function broadcastKeystoreChange(): void {
 // Load persisted settings on startup
 loadSettings();
 
-// Auto-lock alarm
+// Auto-lock alarm — fires every minute to check if the lock deadline
+// has passed. This is the reliable fallback for when the service worker
+// was terminated and the in-memory setTimeout was lost.
 const ALARM_NAME = "gg-wallet-auto-lock";
 
 chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
-    // Keeps service worker alive while wallet is unlocked
+    checkAlarmLock().then(() => {
+      if (!isUnlocked()) {
+        broadcastKeystoreChange();
+      }
+    });
   }
 });
 
@@ -169,10 +177,17 @@ async function handleMessage(msg: any): Promise<any> {
         const address = await unlock(msg.password);
         const wallets = await getWalletList();
         broadcastKeystoreChange();
+        // Resume any dApp requests that were waiting for the wallet to unlock
+        notifyUnlocked();
         return { success: true, address, wallets, activeIndex: getActiveIndex(), isViewOnly: isViewOnly() };
       } catch {
         return { success: false, error: "Wrong password" };
       }
+    }
+
+    case "GET_UNLOCK_CONTEXT": {
+      const result = await chrome.storage.session.get("gg_pending_unlock_context").catch(() => ({} as Record<string, any>));
+      return { context: (result as Record<string, any>)["gg_pending_unlock_context"] || null };
     }
 
     case "LOCK": {

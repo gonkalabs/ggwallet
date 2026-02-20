@@ -274,8 +274,8 @@
       document.getElementById(id).innerHTML = html;
     }
 
-    function ok(text) { return `<span class="success">✓ </span>` + escHtml(text); }
-    function err(text) { return `<span class="error">✗ </span>` + escHtml(text); }
+    function ok(text)   { return `<span class="success">✓ </span>` + escHtml(text); }
+    function err(text)  { return `<span class="error">✗ </span>` + escHtml(text); }
     function info(text) { return `<span class="info">→ </span>` + escHtml(text); }
 
     function escHtml(s) {
@@ -286,16 +286,16 @@
 
     function jsonPretty(obj) {
       return escHtml(JSON.stringify(obj, (key, value) => {
-        // Convert Uint8Array-like objects to hex for display
+        if (value instanceof Uint8Array) {
+          return "0x" + Array.from(value).map(b => b.toString(16).padStart(2, "0")).join("");
+        }
+        // Numeric-keyed object — likely a serialized Uint8Array
         if (value && typeof value === "object" && !Array.isArray(value)) {
           const keys = Object.keys(value);
           if (keys.length > 4 && keys.every(k => !isNaN(Number(k)))) {
             const bytes = new Uint8Array(keys.map(k => value[k]));
             return "0x" + Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
           }
-        }
-        if (value instanceof Uint8Array) {
-          return "0x" + Array.from(value).map(b => b.toString(16).padStart(2, "0")).join("");
         }
         return value;
       }, 2));
@@ -308,59 +308,51 @@
       el.scrollTop = el.scrollHeight;
     }
 
-    // ---- Detection ----
+    // ---- Status ----
 
     function updateStatus() {
-      const dot = document.getElementById("status-dot");
+      const dot  = document.getElementById("status-dot");
       const text = document.getElementById("status-text");
-
-      if (window.gonkaWallet) {
-        if (_address) {
-          dot.className = "dot connected";
-          text.textContent = `Connected: ${_address}`;
-        } else {
-          dot.className = "dot detected";
-          text.textContent = "Provider detected — not connected yet";
-        }
-      } else {
+      if (!window.gonkaWallet) {
         dot.className = "dot";
-        text.textContent = "Provider not found. Is the GG Wallet extension installed?";
+        text.textContent = "Provider not found — is GG Wallet installed?";
+      } else if (_address) {
+        dot.className = "dot connected";
+        text.textContent = "Connected: " + _address;
+      } else {
+        dot.className = "dot detected";
+        text.textContent = "Provider detected — not connected yet";
       }
     }
 
     // ---- Actions ----
 
     async function doEnable() {
-      out("out-connection", info("Calling enable(\"" + CHAIN_ID + "\")..."));
+      out("out-connection", info('Calling enable("' + CHAIN_ID + '")...'));
       try {
         await window.gonkaWallet.enable(CHAIN_ID);
-        out("out-connection", ok("enable() succeeded — wallet is connected"));
         logEvent("enable() succeeded");
-        // Auto-fetch key
         await doGetKey();
       } catch (e) {
         out("out-connection", err(e.message));
         logEvent("enable() failed: " + e.message);
       }
-      updateStatus();
     }
 
     async function doGetKey() {
-      const outId = "out-connection";
       try {
         const key = await window.gonkaWallet.getKey(CHAIN_ID);
         _address = key.bech32Address;
-        const display = {
+        out("out-connection", ok("getKey() result:\n") + jsonPretty({
           name: key.name,
           algo: key.algo,
           bech32Address: key.bech32Address,
           pubKey: key.pubKey,
           isNanoLedger: key.isNanoLedger,
-        };
-        out(outId, ok("getKey() result:\n") + jsonPretty(display));
+        }));
         logEvent("getKey() → " + key.bech32Address);
       } catch (e) {
-        out(outId, err(e.message));
+        out("out-connection", err(e.message));
         logEvent("getKey() failed: " + e.message);
       }
       updateStatus();
@@ -369,8 +361,9 @@
     async function doGetOfflineSigner() {
       try {
         _signer = window.gonkaWallet.getOfflineSigner(CHAIN_ID);
-        out("out-signer", ok("getOfflineSigner() returned signer object\n") +
-          info("Methods: " + Object.keys(Object.getPrototypeOf(_signer)).join(", ")));
+        out("out-signer", ok("getOfflineSigner() returned signer\n") +
+          info("Methods: " + Object.getOwnPropertyNames(Object.getPrototypeOf(_signer))
+            .filter(m => m !== "constructor").join(", ")));
         logEvent("getOfflineSigner() created");
       } catch (e) {
         out("out-signer", err(e.message));
@@ -378,10 +371,7 @@
     }
 
     async function doGetAccounts() {
-      if (!_signer) {
-        out("out-signer", err("No signer — call getOfflineSigner() first"));
-        return;
-      }
+      if (!_signer) { out("out-signer", err("Call getOfflineSigner() first")); return; }
       try {
         const accounts = await _signer.getAccounts();
         out("out-signer", ok("getAccounts() result:\n") + jsonPretty(accounts));
@@ -393,13 +383,10 @@
     }
 
     async function doSignAmino() {
-      if (!_address) {
-        out("out-amino", err("Not connected — call enable() first"));
-        return;
-      }
-      out("out-amino", info("Signing test Amino message..."));
+      if (!_address) { out("out-amino", err("Call enable() or getKey() first")); return; }
+      out("out-amino", info("Waiting for approval..."));
       try {
-        const signDoc = {
+        const result = await window.gonkaWallet.signAmino(CHAIN_ID, _address, {
           chain_id: CHAIN_ID,
           account_number: "0",
           sequence: "0",
@@ -410,11 +397,10 @@
               from_address: _address,
               to_address: _address,
               amount: [{ amount: "1", denom: "ngonka" }],
-            }
+            },
           }],
           memo: "test from GG Wallet dApp tester",
-        };
-        const result = await window.gonkaWallet.signAmino(CHAIN_ID, _address, signDoc);
+        });
         out("out-amino", ok("signAmino() succeeded:\n") + jsonPretty(result));
         logEvent("signAmino() succeeded");
       } catch (e) {
@@ -424,20 +410,26 @@
     }
 
     async function doSignDirect() {
-      if (!_address) {
-        out("out-direct", err("Not connected — call enable() first"));
-        return;
-      }
-      out("out-direct", info("Signing test Direct message..."));
+      if (!_address) { out("out-direct", err("Call enable() or getKey() first")); return; }
+      out("out-direct", info("Waiting for approval..."));
       try {
-        const signDoc = {
+        // signDirect returns bodyBytes/authInfoBytes as Uint8Array
+        const result = await window.gonkaWallet.signDirect(CHAIN_ID, _address, {
           bodyBytes: new Uint8Array([10, 0]),
           authInfoBytes: new Uint8Array([18, 0]),
           chainId: CHAIN_ID,
           accountNumber: "0",
-        };
-        const result = await window.gonkaWallet.signDirect(CHAIN_ID, _address, signDoc);
-        out("out-direct", ok("signDirect() succeeded:\n") + jsonPretty(result));
+        });
+        const signed = result.signed;
+        out("out-direct", ok("signDirect() succeeded:\n") + jsonPretty({
+          signed: {
+            bodyBytes: signed.bodyBytes,
+            authInfoBytes: signed.authInfoBytes,
+            chainId: signed.chainId,
+            accountNumber: signed.accountNumber,
+          },
+          signature: result.signature,
+        }));
         logEvent("signDirect() succeeded");
       } catch (e) {
         out("out-direct", err(e.message));
@@ -446,12 +438,9 @@
     }
 
     async function doSignArbitrary() {
-      if (!_address) {
-        out("out-arbitrary", err("Not connected — call enable() first"));
-        return;
-      }
+      if (!_address) { out("out-arbitrary", err("Call enable() or getKey() first")); return; }
       const msg = document.getElementById("arb-message").value || "Hello";
-      out("out-arbitrary", info("Signing: \"" + msg + "\"..."));
+      out("out-arbitrary", info('Signing: "' + msg + '"...'));
       try {
         const result = await window.gonkaWallet.signArbitrary(CHAIN_ID, _address, msg);
         out("out-arbitrary", ok("signArbitrary() succeeded:\n") + jsonPretty(result));
@@ -463,7 +452,7 @@
     }
 
     async function doSuggestChain() {
-      out("out-suggest", info("Suggesting test chain..."));
+      out("out-suggest", info("Suggesting test-chain-1..."));
       try {
         await window.gonkaWallet.experimentalSuggestChain({
           chainId: "test-chain-1",
@@ -483,7 +472,7 @@
           feeCurrencies: [{ coinDenom: "TEST", coinMinimalDenom: "utest", coinDecimals: 6, gasPriceStep: { low: 0.01, average: 0.025, high: 0.04 } }],
           stakeCurrency: { coinDenom: "TEST", coinMinimalDenom: "utest", coinDecimals: 6 },
         });
-        out("out-suggest", ok("experimentalSuggestChain() succeeded — \"test-chain-1\" added"));
+        out("out-suggest", ok('"test-chain-1" added and persisted across reloads'));
         logEvent("suggestChain() succeeded");
       } catch (e) {
         out("out-suggest", err(e.message));
@@ -493,25 +482,27 @@
 
     // ---- Events ----
 
-    window.addEventListener("keplr_keystorechange", () => {
-      logEvent("keplr_keystorechange event fired — account may have changed");
+    // Re-fetch key automatically after unlock or account switch so the
+    // page stays in sync without requiring a reload.
+    window.addEventListener("keplr_keystorechange", async () => {
+      logEvent("keplr_keystorechange — refreshing key...");
+      await doGetKey();
     });
 
     window.addEventListener("gonkaWallet#initialized", () => {
-      logEvent("gonkaWallet#initialized event fired");
+      logEvent("gonkaWallet#initialized");
       updateStatus();
     });
 
     window.addEventListener("keplr#initialized", () => {
-      logEvent("keplr#initialized event fired");
+      logEvent("keplr#initialized");
     });
 
     // ---- Init ----
 
-    // Wait a moment for the provider to inject
-    setTimeout(updateStatus, 500);
-    setTimeout(updateStatus, 1500);
-    logEvent("Test page loaded — waiting for provider...");
+    setTimeout(updateStatus, 300);
+    setTimeout(updateStatus, 1200);
+    logEvent("Page loaded — waiting for provider...");
   </script>
 </body>
 </html>

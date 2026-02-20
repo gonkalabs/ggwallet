@@ -15,6 +15,8 @@ const KEYS = {
   AUTO_LOCK_MINUTES: "gg_auto_lock_minutes",
   /** Address book entries: AddressBookEntry[] */
   ADDRESS_BOOK: "gg_address_book",
+  /** Suggested chains from dApps: Record<chainId, ChainInfo> */
+  SUGGESTED_CHAINS: "gg_suggested_chains",
 
   // --- Legacy single-wallet keys (migration) ---
   ENCRYPTED_MNEMONIC: "gg_encrypted_mnemonic",

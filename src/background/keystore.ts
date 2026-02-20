@@ -24,6 +24,9 @@ let _activeIndex: number = 0;
 let _viewOnly: boolean = false;
 let _lockTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Key used to persist the lock deadline across service worker restarts
+const LOCK_DEADLINE_KEY = "gg_lock_deadline";
+
 // ------------------------------------------------------------------ //
 //  Wallet CRUD
 // ------------------------------------------------------------------ //
@@ -166,7 +169,6 @@ export async function removeWallet(index: number): Promise<void> {
   let newActive = _activeIndex;
   if (index === _activeIndex) {
     newActive = 0;
-    // Need to switch to wallet 0
     if (_password) {
       const entry = wallets[0];
       _mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, _password);
@@ -235,6 +237,10 @@ export function lock(): void {
   _password = null;
   _viewOnly = false;
   clearLockTimer();
+  // Clear the persisted deadline
+  chrome.storage.session.remove(LOCK_DEADLINE_KEY).catch(() => {
+    chrome.storage.local.remove(LOCK_DEADLINE_KEY).catch(() => {});
+  });
 }
 
 // ------------------------------------------------------------------ //
@@ -307,10 +313,48 @@ export async function exportPrivateKeyHex(): Promise<string> {
 //  Auto-lock timer
 // ------------------------------------------------------------------ //
 
+function persistLockDeadline(deadlineMs: number): void {
+  // Prefer session storage (cleared on browser restart); fall back to local
+  chrome.storage.session.set({ [LOCK_DEADLINE_KEY]: deadlineMs }).catch(() => {
+    chrome.storage.local.set({ [LOCK_DEADLINE_KEY]: deadlineMs }).catch(() => {});
+  });
+}
+
 function resetLockTimer(): void {
   clearLockTimer();
   if (_autoLockMs === 0) return; // "Never" mode
+  const deadline = Date.now() + _autoLockMs;
+  persistLockDeadline(deadline);
   _lockTimer = setTimeout(() => lock(), _autoLockMs);
+}
+
+/**
+ * Called by the chrome.alarms handler every minute.
+ * Checks if the persisted deadline has passed and locks if so.
+ * This handles the case where the service worker was terminated and
+ * the in-memory setTimeout was lost.
+ */
+export async function checkAlarmLock(): Promise<void> {
+  // Only relevant when the wallet is currently unlocked in memory
+  if (!isUnlocked()) return;
+  if (_autoLockMs === 0) return;
+
+  let deadline: number | undefined;
+  try {
+    const result = await chrome.storage.session.get(LOCK_DEADLINE_KEY);
+    deadline = result[LOCK_DEADLINE_KEY];
+  } catch {
+    try {
+      const result = await chrome.storage.local.get(LOCK_DEADLINE_KEY);
+      deadline = result[LOCK_DEADLINE_KEY];
+    } catch {
+      return;
+    }
+  }
+
+  if (deadline !== undefined && Date.now() >= deadline) {
+    lock();
+  }
 }
 
 /** Load saved auto-lock setting from storage (called once on background start). */
