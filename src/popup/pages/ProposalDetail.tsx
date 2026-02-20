@@ -58,6 +58,8 @@ export default function ProposalDetail() {
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [tally, setTally] = useState<Proposal["finalTallyResult"] | null>(null);
   const [myVote, setMyVote] = useState<string | null>(null);
+  const [quorum, setQuorum] = useState<number | null>(null);
+  const [bondedTokens, setBondedTokens] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -75,10 +77,11 @@ export default function ProposalDetail() {
     setError("");
 
     try {
-      const [proposalResp, tallyResp, voteResp] = await Promise.all([
+      const [proposalResp, tallyResp, voteResp, govResp] = await Promise.all([
         sendMessage({ type: "GET_PROPOSAL", proposalId: id }),
         sendMessage({ type: "GET_PROPOSAL_TALLY", proposalId: id }),
         sendMessage({ type: "GET_VOTE", proposalId: id }),
+        sendMessage({ type: "GET_GOV_PARAMS" }),
       ]);
 
       if (proposalResp.success) setProposal(proposalResp.proposal);
@@ -86,6 +89,10 @@ export default function ProposalDetail() {
 
       if (tallyResp.success) setTally(tallyResp.tally);
       if (voteResp.success && voteResp.vote) setMyVote(voteResp.vote);
+      if (govResp.success) {
+        setQuorum(parseFloat(govResp.params.quorum));
+        setBondedTokens(govResp.bondedTokens);
+      }
     } catch (e: any) {
       setError(e.message || "Failed to load proposal");
     } finally {
@@ -211,7 +218,17 @@ export default function ProposalDetail() {
 
         {/* Tally */}
         <div className="card !p-3 space-y-3">
-          <h3 className="text-xs font-semibold text-surface-300">Tally</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold text-surface-300">Tally</h3>
+            {quorum !== null && bondedTokens && (
+              <QuorumBadge totalVoted={total} bondedTokens={bondedTokens} quorum={quorum} />
+            )}
+          </div>
+
+          {quorum !== null && bondedTokens && Number(bondedTokens) > 0 && (
+            <QuorumBar totalVoted={total} bondedTokens={bondedTokens} quorum={quorum} />
+          )}
+
           <div className="h-2 rounded-full bg-surface-800 overflow-hidden flex">
             {total > 0 && (
               <>
@@ -417,4 +434,48 @@ function extractLinks(proposal: Proposal): { url: string; label: string }[] {
   }
 
   return links;
+}
+
+function QuorumBadge({ totalVoted, bondedTokens, quorum }: { totalVoted: number; bondedTokens: string; quorum: number }) {
+  const bonded = Number(bondedTokens);
+  if (bonded === 0) return null;
+  const votedPct = (totalVoted / bonded) * 100;
+  const quorumPct = quorum * 100;
+  const reached = votedPct >= quorumPct;
+
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${
+      reached
+        ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/20"
+        : "bg-amber-500/15 text-amber-400 border-amber-500/20"
+    }`}>
+      {reached ? "Quorum reached" : `Quorum: ${votedPct.toFixed(1)}% / ${quorumPct}%`}
+    </span>
+  );
+}
+
+function QuorumBar({ totalVoted, bondedTokens, quorum }: { totalVoted: number; bondedTokens: string; quorum: number }) {
+  const bonded = Number(bondedTokens);
+  if (bonded === 0) return null;
+  const votedPct = Math.min((totalVoted / bonded) * 100, 100);
+  const quorumPct = quorum * 100;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[10px] text-surface-500">
+        <span>Turnout: {votedPct.toFixed(1)}%</span>
+        <span>Quorum: {quorumPct}%</span>
+      </div>
+      <div className="relative h-1.5 rounded-full bg-surface-800 overflow-hidden">
+        <div
+          className="h-full bg-gonka-500/60 rounded-full transition-all"
+          style={{ width: `${votedPct}%` }}
+        />
+        <div
+          className="absolute top-0 bottom-0 w-px bg-white/30"
+          style={{ left: `${quorumPct}%` }}
+        />
+      </div>
+    </div>
+  );
 }

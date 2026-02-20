@@ -39,16 +39,27 @@ export default function Proposals() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [govParams, setGovParams] = useState<{ quorum: number; threshold: number; vetoThreshold: number } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const resp = await sendMessage({ type: "GET_PROPOSALS" });
+      const [resp, govResp] = await Promise.all([
+        sendMessage({ type: "GET_PROPOSALS" }),
+        sendMessage({ type: "GET_GOV_PARAMS" }),
+      ]);
       if (resp.success) {
         setProposals(resp.proposals);
       } else {
         setError(resp.error || "Failed to load proposals");
+      }
+      if (govResp.success) {
+        setGovParams({
+          quorum: parseFloat(govResp.params.quorum) * 100,
+          threshold: parseFloat(govResp.params.threshold) * 100,
+          vetoThreshold: parseFloat(govResp.params.vetoThreshold) * 100,
+        });
       }
     } catch (e: any) {
       setError(e.message || "Failed to load proposals");
@@ -75,6 +86,19 @@ export default function Proposals() {
           </svg>
           New Proposal
         </button>
+
+        {govParams && (
+          <div className="card !p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <ParamPill label="Quorum" value={`${govParams.quorum}%`} />
+                <ParamPill label="Pass" value={`${govParams.threshold}%`} />
+                <ParamPill label="Veto" value={`${govParams.vetoThreshold}%`} />
+              </div>
+              <span className="text-[10px] text-surface-600">On-chain</span>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center justify-center py-16">
@@ -134,6 +158,15 @@ export default function Proposals() {
         )}
       </div>
     </Layout>
+  );
+}
+
+function ParamPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-center">
+      <p className="text-[10px] text-surface-500">{label}</p>
+      <p className="text-xs font-semibold text-surface-200 tabular-nums">{value}</p>
+    </div>
   );
 }
 

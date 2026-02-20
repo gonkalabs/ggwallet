@@ -29,7 +29,8 @@ import {
 import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
 import {
   queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient,
-  queryProposals, queryProposal, queryProposalTally, queryVote, voteProposal, submitProposal, depositToProposal,
+  queryProposals, queryProposal, queryProposalTally, queryGovParams, queryBondedTokens,
+  queryVote, voteProposal, submitProposal, depositToProposal,
   type VoteOption,
 } from "@/lib/cosmos";
 import { getActiveEndpoint, setActiveEndpoint, RpcEndpoint } from "@/lib/rpc";
@@ -371,6 +372,18 @@ async function handleMessage(msg: any): Promise<any> {
       try {
         const tally = await queryProposalTally(msg.proposalId);
         return { success: true, tally };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "GET_GOV_PARAMS": {
+      try {
+        const [params, bondedTokens] = await Promise.all([
+          queryGovParams(),
+          queryBondedTokens(),
+        ]);
+        return { success: true, params, bondedTokens };
       } catch (e: any) {
         return { success: false, error: e.message };
       }

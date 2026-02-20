@@ -352,6 +352,39 @@ export async function queryProposalTally(proposalId: string): Promise<Proposal["
   };
 }
 
+export interface GovTallyParams {
+  quorum: string;
+  threshold: string;
+  vetoThreshold: string;
+}
+
+export async function queryGovParams(): Promise<GovTallyParams> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(
+    `${rest}cosmos/gov/v1/params/tallying`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch gov params: ${resp.status}`);
+  const data = await resp.json();
+  const p = data.tally_params || data.params || {};
+  return {
+    quorum: p.quorum || "0",
+    threshold: p.threshold || "0",
+    vetoThreshold: p.veto_threshold || "0",
+  };
+}
+
+export async function queryBondedTokens(): Promise<string> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(
+    `${rest}cosmos/staking/v1beta1/pool`,
+    { signal: AbortSignal.timeout(10000) }
+  );
+  if (!resp.ok) throw new Error(`Failed to fetch staking pool: ${resp.status}`);
+  const data = await resp.json();
+  return data.pool?.bonded_tokens || "0";
+}
+
 export async function queryVote(proposalId: string, voter: string): Promise<string | null> {
   const { rest } = await getActiveEndpoint();
   try {
