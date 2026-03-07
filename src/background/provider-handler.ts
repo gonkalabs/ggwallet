@@ -463,6 +463,11 @@ async function executeEnable(
 }
 
 async function handleGetKey(params: { chainId: string }, origin?: string): Promise<{ result?: any; error?: string }> {
+  // Require prior enable() grant before exposing key material
+  if (origin && !(await isOriginConnected(origin, [params.chainId]))) {
+    return { error: "Site not connected. Call enable() first." };
+  }
+
   if (!isUnlocked()) {
     try {
       await requestUnlock(origin, "getKey");
