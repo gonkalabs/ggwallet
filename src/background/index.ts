@@ -31,8 +31,10 @@ import {
   queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient,
   queryProposals, queryProposal, queryProposalTally, queryGovParams, queryBondedTokens,
   queryVote, voteProposal, submitProposal, depositToProposal,
+  executeContract,
   type VoteOption,
 } from "@/lib/cosmos";
+import { GNS_CONTRACT_ADDRESS } from "@/lib/gonka";
 import { getActiveEndpoint, setActiveEndpoint, RpcEndpoint } from "@/lib/rpc";
 import {
   handleProviderRequest,
@@ -42,6 +44,7 @@ import {
   approveRequest,
   rejectRequest,
   notifyUnlocked,
+  rejectUnlock,
 } from "./provider-handler";
 
 // Notify all content scripts about keystore changes (Keplr compatibility).
@@ -195,6 +198,11 @@ async function handleMessage(msg: any): Promise<any> {
       return { context: (result as Record<string, any>)["gg_pending_unlock_context"] || null };
     }
 
+    case "REJECT_UNLOCK": {
+      rejectUnlock();
+      return { success: true };
+    }
+
     case "LOCK": {
       lock();
       broadcastKeystoreChange();
@@ -243,6 +251,25 @@ async function handleMessage(msg: any): Promise<any> {
       if (!mnemonic) return { success: false, error: "Wallet is locked" };
       const result = await withdrawRewards(mnemonic, msg.validators);
       return { success: true, ...result };
+    }
+
+    // ---- GNS (Gonka Name Service) ----
+
+    case "GNS_EXECUTE": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      if (!GNS_CONTRACT_ADDRESS) return { success: false, error: "GNS contract not configured" };
+      try {
+        const result = await executeContract(
+          mnemonic,
+          GNS_CONTRACT_ADDRESS,
+          msg.contractMsg,
+          msg.funds ?? []
+        );
+        return { success: true, ...result };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
     }
 
     // ---- Export ----

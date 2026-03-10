@@ -62,6 +62,11 @@ export default function Unlock() {
     }
   };
 
+  const handleReject = async () => {
+    await sendMessage({ type: "REJECT_UNLOCK" }).catch(() => {});
+    window.close();
+  };
+
   return (
     <div className="flex flex-col items-center justify-between h-[600px] px-6 py-10 bg-surface-950">
       <div />
@@ -120,6 +125,16 @@ export default function Unlock() {
               "Unlock"
             )}
           </button>
+
+          {originHostname && (
+            <button
+              type="button"
+              onClick={handleReject}
+              className="w-full py-2.5 text-sm font-medium text-surface-400 hover:text-red-400 transition-colors rounded-xl hover:bg-white/[0.04]"
+            >
+              Reject request
+            </button>
+          )}
         </form>
       </div>
 

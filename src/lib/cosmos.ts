@@ -1,8 +1,14 @@
-import { StargateClient, SigningStargateClient, GasPrice, coin } from "@cosmjs/stargate";
-import { DirectSecp256k1HdWallet } from "@cosmjs/proto-signing";
+import { StargateClient, SigningStargateClient, GasPrice, coin, defaultRegistryTypes } from "@cosmjs/stargate";
+import { DirectSecp256k1HdWallet, Registry } from "@cosmjs/proto-signing";
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve, stringToPath } from "@cosmjs/crypto";
+import { MsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
 import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE, GONKA_DECIMALS, GONKA_DISPLAY_DENOM } from "./gonka";
 import { getActiveEndpoint } from "./rpc";
+
+const registry = new Registry([
+  ...defaultRegistryTypes,
+  ["/cosmwasm.wasm.v1.MsgExecuteContract", MsgExecuteContract],
+]);
 
 export interface TokenBalance {
   denom: string;
@@ -64,6 +70,7 @@ export async function getSigningClient(mnemonic: string): Promise<{
   const [account] = await wallet.getAccounts();
   const { rpc } = await getActiveEndpoint();
   const client = await SigningStargateClient.connectWithSigner(rpc, wallet, {
+    registry,
     gasPrice: GasPrice.fromString(`0${GONKA_DENOM}`),
   });
 
@@ -563,4 +570,35 @@ export async function withdrawRewards(
   }
 
   return { txHash: result.transactionHash };
+}
+
+/**
+ * Execute a CosmWasm contract message.
+ * `funds` is an optional array of coins to send along (e.g. for Buy on GNS marketplace).
+ */
+export async function executeContract(
+  mnemonic: string,
+  contractAddress: string,
+  msg: object,
+  funds: { denom: string; amount: string }[] = []
+): Promise<{ txHash: string; height: number }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const executeMsg = {
+    typeUrl: "/cosmwasm.wasm.v1.MsgExecuteContract",
+    value: {
+      sender: address,
+      contract: contractAddress,
+      msg: new TextEncoder().encode(JSON.stringify(msg)),
+      funds: funds.map((f) => coin(f.amount, f.denom)),
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [executeMsg], "auto");
+
+  if (result.code !== 0) {
+    throw new Error(`Contract execution failed: ${result.rawLog}`);
+  }
+
+  return { txHash: result.transactionHash, height: result.height };
 }

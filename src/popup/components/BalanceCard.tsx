@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { toDisplay, toDisplayDecimals } from "@/lib/format";
 import { GONKA_DISPLAY_DENOM } from "@/lib/gonka";
+import { reverseResolve } from "@/lib/gns";
 import type { TokenBalance } from "@/lib/cosmos";
 import Spinner from "@/popup/components/Spinner";
 
@@ -31,6 +32,13 @@ export default function BalanceCard({
   const [copied, setCopied] = useState(false);
 
   const ibcTokens = tokenBalances.filter((t) => t.isIbc);
+
+  const [gnsName, setGnsName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!address) return;
+    setGnsName(null);
+    reverseResolve(address).then((name) => setGnsName(name));
+  }, [address]);
 
   const handleCopyAddress = () => {
     navigator.clipboard.writeText(address);
@@ -85,6 +93,12 @@ export default function BalanceCard({
         )}
         {loading && (
           <div className="h-6 w-24 bg-white/5 rounded-xl animate-pulse mb-3" />
+        )}
+
+        {gnsName && (
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <span className="text-sm font-bold text-gonka-400">{gnsName}</span>
+          </div>
         )}
 
         <button

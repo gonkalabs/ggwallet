@@ -28,3 +28,7 @@ export const GONKA_GAS_PRICE = "0ngonka";
 
 export const GONKA_EXPLORER_URL = "https://gonka.gg";
 export const GONKA_EXPLORER_API_KEY = "gnk_live_VhYzuMO2cSQDq-WkNnQQzDl5DF5hxaQc3pwXtWisKsc";
+
+// Gonka Name Service (.gnk) — set after deployment
+export const GNS_CONTRACT_ADDRESS = "gonka1rd582xazhyxde68g099ed0zpjzq0j0shnhkegg06s8009h7lnxjqvyf0qf";
+export const GNS_SUFFIX = ".gnk";

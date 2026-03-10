@@ -347,6 +347,19 @@ export function notifyUnlocked(): void {
 }
 
 /**
+ * Called when the user explicitly rejects a dApp unlock request.
+ * Rejects all pending requestUnlock() promises so dApp requests fail
+ * with a user-rejected error.
+ */
+export function rejectUnlock(): void {
+  for (const waiter of _unlockWaiters) {
+    waiter.reject(new Error("User rejected the request"));
+  }
+  _unlockWaiters.clear();
+  chrome.storage.session.remove(UNLOCK_CONTEXT_KEY).catch(() => {});
+}
+
+/**
  * Store unlock context so the popup can read it even after a SW restart.
  */
 async function storeUnlockContext(origin?: string, method?: string): Promise<void> {
@@ -463,6 +476,10 @@ async function executeEnable(
 }
 
 async function handleGetKey(params: { chainId: string }, origin?: string): Promise<{ result?: any; error?: string }> {
+  if (origin && !(await isOriginConnected(origin, [params.chainId]))) {
+    return { error: "Site not connected. Call enable() first." };
+  }
+
   if (!isUnlocked()) {
     try {
       await requestUnlock(origin, "getKey");

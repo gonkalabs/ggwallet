@@ -20,6 +20,7 @@ A browser extension wallet built exclusively for the **Gonka blockchain** networ
 - **Auto-lock** — configurable timeout (1 / 5 / 15 / 30 min or never)
 - **Private Key Export** — compatible with [opengnk](https://github.com/gonkalabs/opengnk) proxy
 - **Gonka Inference Signer** — TypeScript port of the opengnk signing scheme (RFC 6979 ECDSA)
+- **GNS** — Support of tx signing and address resolution with GNS
 
 ## Tech Stack
 

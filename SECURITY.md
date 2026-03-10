@@ -6,7 +6,7 @@ GG Wallet handles private keys and mnemonics. We take security seriously.
 
 If you discover a security vulnerability, **do not open a public GitHub issue**.
 
-Instead, please email **security@gonkalabs.com** with:
+Instead, please email **info@gonka.gg** with:
 
 - A description of the vulnerability
 - Steps to reproduce

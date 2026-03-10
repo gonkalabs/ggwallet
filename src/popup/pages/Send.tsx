@@ -4,6 +4,7 @@ import { useWalletStore } from "@/popup/store";
 import { sendMessage } from "@/lib/messaging";
 import { toMinimalDecimals, toDisplayDecimals } from "@/lib/format";
 import { GONKA_BECH32_PREFIX } from "@/lib/gonka";
+import { isGnsName, resolveGnsName } from "@/lib/gns";
 import type { TokenBalance } from "@/lib/cosmos";
 import type { AddressBookEntry } from "@/lib/storage";
 import Layout from "@/popup/components/Layout";
@@ -29,6 +30,9 @@ export default function Send() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [txHash, setTxHash] = useState("");
+  const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [resolvedName, setResolvedName] = useState<string | null>(null);
 
   // Address book
   const [addressBook, setAddressBook] = useState<AddressBookEntry[]>([]);
@@ -47,12 +51,39 @@ export default function Send() {
     }
   }, [tokenBalances]);
 
+  // Resolve .gnk names as the user types
+  useEffect(() => {
+    setResolvedAddress(null);
+    setResolvedName(null);
+    if (!isGnsName(recipient)) return;
+
+    let cancelled = false;
+    setResolving(true);
+    resolveGnsName(recipient).then((addr) => {
+      if (cancelled) return;
+      setResolving(false);
+      if (addr) {
+        setResolvedAddress(addr);
+        setResolvedName(recipient.trim());
+      } else {
+        setResolvedAddress(null);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [recipient]);
+
   const validateAddress = (addr: string) =>
     addr.startsWith(GONKA_BECH32_PREFIX) && addr.length >= 39;
 
+  const effectiveRecipient = resolvedAddress ?? recipient;
+
   const handleReview = () => {
     setError("");
-    if (!validateAddress(recipient)) {
+    if (isGnsName(recipient) && !resolvedAddress) {
+      setError(resolving ? "Resolving name…" : "Name not found or not registered");
+      return;
+    }
+    if (!validateAddress(effectiveRecipient)) {
       setError("Invalid Gonka address");
       return;
     }
@@ -65,7 +96,7 @@ export default function Send() {
       setError("Insufficient balance");
       return;
     }
-    if (recipient === address) {
+    if (effectiveRecipient === address) {
       setError("Cannot send to yourself");
       return;
     }
@@ -79,7 +110,7 @@ export default function Send() {
       const minAmount = toMinimalDecimals(amount, selectedToken.decimals);
       const resp = await sendMessage({
         type: "SEND_TOKENS",
-        recipient,
+        recipient: effectiveRecipient,
         amount: minAmount,
         denom: selectedToken.denom,
         memo,
@@ -134,9 +165,14 @@ export default function Send() {
       <Layout title="Confirm Transaction" showBack={false} showNav={false}>
         <div className="px-4 py-4 space-y-4">
           <div className="card space-y-3">
-            <div className="flex justify-between">
-              <span className="text-sm text-surface-500">To</span>
-              <span className="text-sm font-mono text-right max-w-[220px] break-all">{recipient}</span>
+            <div className="flex justify-between items-start gap-4">
+              <span className="text-sm text-surface-500 shrink-0">To</span>
+              <div className="text-right">
+                {resolvedName && (
+                  <p className="text-xs text-gonka-400 font-semibold mb-0.5">{resolvedName}</p>
+                )}
+                <span className="text-sm font-mono break-all">{effectiveRecipient}</span>
+              </div>
             </div>
             <div className="border-t border-white/[0.04]" />
             <div className="flex justify-between">
@@ -220,12 +256,12 @@ export default function Send() {
 
         {/* Recipient */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-surface-300">Recipient Address</label>
+          <label className="block text-sm font-medium text-surface-300">Recipient</label>
           <div className="relative">
             <input
               type="text"
-              className="input-field font-mono text-sm pr-10"
-              placeholder="gonka1..."
+              className={`input-field font-mono text-sm pr-10 ${resolvedAddress ? "border-gonka-500/40" : ""}`}
+              placeholder="gonka1... or mike.gnk"
               value={recipient}
               onChange={(e) => {
                 setRecipient(e.target.value.trim());
@@ -233,7 +269,7 @@ export default function Send() {
               }}
               autoFocus
             />
-            {addressBook.length > 0 && (
+            {addressBook.length > 0 && !isGnsName(recipient) && (
               <button
                 onClick={() => setShowBook(true)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-surface-500 hover:text-gonka-400 transition-colors"
@@ -245,6 +281,25 @@ export default function Send() {
               </button>
             )}
           </div>
+          {/* GNS resolution status */}
+          {isGnsName(recipient) && (
+            <div className="flex items-center gap-2 px-1">
+              {resolving ? (
+                <span className="text-xs text-surface-500 flex items-center gap-1.5">
+                  <Spinner size="sm" /> Resolving {recipient}…
+                </span>
+              ) : resolvedAddress ? (
+                <span className="text-xs text-gonka-400 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="font-mono truncate">{resolvedAddress}</span>
+                </span>
+              ) : recipient.length > 4 ? (
+                <span className="text-xs text-red-400">Name not found</span>
+              ) : null}
+            </div>
+          )}
         </div>
 
         {/* Amount */}
