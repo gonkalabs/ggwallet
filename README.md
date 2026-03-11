@@ -1,8 +1,7 @@
 # GG Wallet
 
-[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
+[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) (v0.1.4) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
 
-> **Note:** The Chrome Web Store currently hosts v0.1.0. This repository is at **v0.1.3** with additional features (governance, full-precision amounts, IBC tokens, auto-lock, address book, and improved UX).
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
 
@@ -20,7 +19,7 @@ A browser extension wallet built exclusively for the **Gonka blockchain** networ
 - **Auto-lock** — configurable timeout (1 / 5 / 15 / 30 min or never)
 - **Private Key Export** — compatible with [opengnk](https://github.com/gonkalabs/opengnk) proxy
 - **Gonka Inference Signer** — TypeScript port of the opengnk signing scheme (RFC 6979 ECDSA)
-- **GNS** — Support of tx signing and address resolution with GNS
+- **GNS** — Support of tx signing and address resolution with Gonka Name Service (like ENS in Ethereum)
 
 ## Tech Stack
 
