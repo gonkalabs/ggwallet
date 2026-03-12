@@ -26,7 +26,7 @@ import { storageGet, storageSet, KEYS, type ConnectedSite } from "@/lib/storage"
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve } from "@cosmjs/crypto";
 
 // ------------------------------------------------------------------
-//  HD Path
+//  HD Paths
 // ------------------------------------------------------------------
 
 const GONKA_HD: HdPath = [
@@ -36,6 +36,17 @@ const GONKA_HD: HdPath = [
   Slip10RawIndex.normal(0),
   Slip10RawIndex.normal(0),
 ];
+
+const COSMOS_HD: HdPath = [
+  Slip10RawIndex.hardened(44),
+  Slip10RawIndex.hardened(118),
+  Slip10RawIndex.hardened(0),
+  Slip10RawIndex.normal(0),
+  Slip10RawIndex.normal(0),
+];
+
+const COSMOSHUB_CHAIN_ID = "cosmoshub-4";
+const COSMOSHUB_BECH32_PREFIX = "cosmos";
 
 // ------------------------------------------------------------------
 //  Suggested chains store — persisted to storage so they survive
@@ -246,6 +257,7 @@ async function getWalletForChain(_chainId: string): Promise<DirectSecp256k1HdWal
 
 function getBech32Prefix(chainId: string): string {
   if (chainId === GONKA_CHAIN_ID) return GONKA_BECH32_PREFIX;
+  if (chainId === COSMOSHUB_CHAIN_ID) return COSMOSHUB_BECH32_PREFIX;
   const suggested = _suggestedChains.get(chainId);
   if (suggested?.bech32Config?.bech32PrefixAccAddr) {
     return suggested.bech32Config.bech32PrefixAccAddr;
@@ -255,6 +267,7 @@ function getBech32Prefix(chainId: string): string {
 
 function getHdPaths(chainId: string): HdPath[] {
   if (chainId === GONKA_CHAIN_ID) return [GONKA_HD];
+  if (chainId === COSMOSHUB_CHAIN_ID) return [COSMOS_HD];
   const suggested = _suggestedChains.get(chainId);
   if (suggested?.bip44?.coinType) {
     return [[
@@ -269,7 +282,7 @@ function getHdPaths(chainId: string): HdPath[] {
 }
 
 function isSupportedChain(chainId: string): boolean {
-  return chainId === GONKA_CHAIN_ID || _suggestedChains.has(chainId);
+  return chainId === GONKA_CHAIN_ID || chainId === COSMOSHUB_CHAIN_ID || _suggestedChains.has(chainId);
 }
 
 async function derivePrivateKeyBytes(mnemonic: string, chainId: string): Promise<Uint8Array> {
@@ -435,10 +448,17 @@ async function handleEnable(
   params: { chainIds: string[] },
   origin?: string,
 ): Promise<{ result?: any; error?: string }> {
-  // If this origin is already connected for all requested chains, approve
+  // Filter to supported chains only — dApps may request chains we don't
+  // support (e.g. osmosis-1) alongside ones we do. Proceed with what we can.
+  const supported = params.chainIds.filter(isSupportedChain);
+  if (supported.length === 0) {
+    return { error: "None of the requested chains are supported." };
+  }
+
+  // If this origin is already connected for all supported chains, approve
   // immediately — no unlock required. The stored connection grant is
   // persistent and survives service worker restarts.
-  if (origin && await isOriginConnected(origin, params.chainIds)) {
+  if (origin && await isOriginConnected(origin, supported)) {
     return { result: true };
   }
 
@@ -451,14 +471,8 @@ async function handleEnable(
     }
   }
 
-  for (const chainId of params.chainIds) {
-    if (!isSupportedChain(chainId)) {
-      return { error: `Chain ${chainId} is not supported. Use experimentalSuggestChain to add it.` };
-    }
-  }
-
   // Request approval via popup
-  return requestApproval("enable", params, origin || "unknown");
+  return requestApproval("enable", { ...params, chainIds: supported }, origin || "unknown");
 }
 
 // ------------------------------------------------------------------
@@ -476,8 +490,16 @@ async function executeEnable(
 }
 
 async function handleGetKey(params: { chainId: string }, origin?: string): Promise<{ result?: any; error?: string }> {
+  if (!isSupportedChain(params.chainId)) {
+    return { error: `Chain ${params.chainId} is not supported.` };
+  }
+
+  // Auto-trigger enable flow if the site hasn't connected yet.
+  // Many Cosmos dApps call getKey() directly without enable() first
+  // (Keplr handles this gracefully, so we must too for compatibility).
   if (origin && !(await isOriginConnected(origin, [params.chainId]))) {
-    return { error: "Site not connected. Call enable() first." };
+    const enableResult = await handleEnable({ chainIds: [params.chainId] }, origin);
+    if (enableResult.error) return enableResult;
   }
 
   if (!isUnlocked()) {
