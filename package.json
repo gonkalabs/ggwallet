@@ -1,7 +1,7 @@
 {
   "name": "gg-wallet",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "GG Wallet — an open-source, community wallet to interact with the Gonka.ai blockchain",
   "type": "module",
   "scripts": {
