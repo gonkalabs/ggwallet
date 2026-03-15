@@ -1,6 +1,6 @@
 # GG Wallet
 
-[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) (v0.1.4) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
+[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) (v0.1.6) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
 
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.
@@ -19,7 +19,25 @@ A browser extension wallet built exclusively for the **Gonka blockchain** networ
 - **Auto-lock** — configurable timeout (1 / 5 / 15 / 30 min or never)
 - **Private Key Export** — compatible with [opengnk](https://github.com/gonkalabs/opengnk) proxy
 - **Gonka Inference Signer** — TypeScript port of the opengnk signing scheme (RFC 6979 ECDSA)
-- **GNS** — Support of tx signing and address resolution with Gonka Name Service (like ENS in Ethereum)
+- **Gonka Name Service (GNS)** — register human-readable `.gnk` names that resolve to wallet addresses, like ENS on Ethereum. Your primary name is displayed in the wallet, and you can send tokens to any `.gnk` name instead of pasting a long address. [**Purchase a .gnk name on gonka.gg**](https://gonka.gg/gns)
+- **dApp Provider** — built-in Keplr-compatible provider (`window.gonkaWallet`) lets dApps connect, request signatures, and broadcast transactions through the wallet
+
+## Gonka Name Service (GNS)
+
+GNS lets you register a short, memorable name like `mike.gnk` that maps to your `gonka1...` address. The wallet integrates GNS in two ways:
+
+- **Name display** — your primary `.gnk` name appears on the main screen next to your address
+- **Send by name** — type a `.gnk` name in the Send page instead of a full address; the wallet resolves it automatically
+
+Names cost 1 GNK each, never expire, and can be transferred or sold on the marketplace. One wallet can own multiple names with one set as "primary" for reverse lookup.
+
+| | |
+|---|---|
+| Register a name | [gonka.gg/gns](https://gonka.gg/gns) |
+| Contract address | `gonka1rd582xazhyxde68g099ed0zpjzq0j0shnhkegg06s8009h7lnxjqvyf0qf` |
+| Name rules | 3-63 chars, lowercase a-z, 0-9, hyphens, no leading/trailing hyphen |
+| Suffix | `.gnk` |
+| Price | 1 GNK per name |
 
 ## Tech Stack
 
@@ -83,6 +101,7 @@ src/
   lib/
     gonka.ts           # Chain configuration constants
     gonka-signer.ts    # opengnk-compatible inference request signer
+    gns.ts             # GNS name resolution and reverse lookup
     cosmos.ts          # CosmJS helpers (balance, send, stake, governance)
     api.ts             # gonka.gg Explorer API client
     crypto.ts          # AES-GCM encryption helpers
