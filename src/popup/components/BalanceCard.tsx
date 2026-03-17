@@ -12,6 +12,8 @@ interface BalanceCardProps {
   loading?: boolean;
   /** Show a subtle refresh indicator while fetching fresh data in background */
   refreshing?: boolean;
+  /** Force-refresh callback */
+  onRefresh?: () => void;
 }
 
 export default function BalanceCard({
@@ -20,6 +22,7 @@ export default function BalanceCard({
   address,
   loading,
   refreshing,
+  onRefresh,
 }: BalanceCardProps) {
   const displayAmount = toDisplay(balance);
   const balanceSizeClass = useMemo(() => {
@@ -57,9 +60,19 @@ export default function BalanceCard({
           <span className="text-xs text-surface-400 font-medium tracking-wide uppercase">
             Total Balance
           </span>
-          {refreshing && !loading && (
+          {refreshing && !loading ? (
             <Spinner size="sm" className="!w-3 !h-3 !text-surface-600" />
-          )}
+          ) : onRefresh ? (
+            <button
+              onClick={onRefresh}
+              className="p-0.5 text-surface-600 hover:text-gonka-400 transition-colors rounded-lg hover:bg-white/[0.04] active:scale-90"
+              title="Refresh balance"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.015 4.356v4.992" />
+              </svg>
+            </button>
+          ) : null}
         </div>
 
         {/* GNK balance — primary */}

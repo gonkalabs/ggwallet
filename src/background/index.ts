@@ -25,6 +25,9 @@ import {
   getAutoLockMinutes,
   setAutoLockTimeout,
   checkAlarmLock,
+  notifyPopupOpen,
+  notifyPopupClosed,
+  rehydrateIfNeeded,
 } from "./keystore";
 import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
 import {
@@ -47,17 +50,18 @@ import {
   rejectUnlock,
 } from "./provider-handler";
 
-// Notify all content scripts about keystore changes (Keplr compatibility).
+// Notify all content scripts and extension views about keystore changes.
 function broadcastKeystoreChange(): void {
+  // Notify content scripts in regular tabs (Keplr compatibility)
   chrome.tabs.query({}, (tabs) => {
     for (const tab of tabs) {
       if (tab.id != null) {
-        chrome.tabs.sendMessage(tab.id, { type: "KEYSTORE_CHANGED" }).catch(() => {
-          // Tab may not have the content script — ignore
-        });
+        chrome.tabs.sendMessage(tab.id, { type: "KEYSTORE_CHANGED" }).catch(() => {});
       }
     }
   });
+  // Notify extension popup/approval windows so they can re-sync state
+  chrome.runtime.sendMessage({ type: "KEYSTORE_CHANGED" }).catch(() => {});
 }
 
 // Load persisted settings on startup
@@ -71,10 +75,27 @@ const ALARM_NAME = "gg-wallet-auto-lock";
 chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
-    checkAlarmLock().then(() => {
+    // Rehydrate first so isUnlocked() reflects the true state
+    rehydrateIfNeeded().then(() => checkAlarmLock()).then(() => {
       if (!isUnlocked()) {
         broadcastKeystoreChange();
       }
+    });
+  }
+});
+
+// Track popup lifecycle via persistent connections.
+// Each popup/extension page connects a port; when all disconnect, the popup is closed.
+let _popupPorts = 0;
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "popup-keepalive") {
+    _popupPorts++;
+    if (_popupPorts === 1) notifyPopupOpen();
+
+    port.onDisconnect.addListener(() => {
+      _popupPorts = Math.max(0, _popupPorts - 1);
+      if (_popupPorts === 0) notifyPopupClosed();
     });
   }
 });
@@ -88,6 +109,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage(msg: any): Promise<any> {
+  // Re-hydrate unlock state if the service worker was restarted
+  await rehydrateIfNeeded();
   touchActivity();
 
   switch (msg.type) {

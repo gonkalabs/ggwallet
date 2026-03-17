@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useWalletStore } from "@/popup/store";
 import { fetchTransactions, Transaction } from "@/lib/api";
-import { getCache, setCache, cacheKey } from "@/lib/cache";
+import { getCache, setCache, cacheKey, isCacheFresh } from "@/lib/cache";
 import Layout from "@/popup/components/Layout";
 import TxItem from "@/popup/components/TxItem";
 import Spinner from "@/popup/components/Spinner";
@@ -30,7 +30,7 @@ export default function Transactions() {
 
   const PAGE_SIZE = 20;
 
-  // Load cached, then fetch fresh
+  // Load cached, then fetch fresh only if stale
   const loadInitial = useCallback(async () => {
     if (!address) return;
 
@@ -45,7 +45,10 @@ export default function Transactions() {
       setHasCached(true);
     }
 
-    // 2. Fetch fresh in background
+    // 2. Skip refresh if cache is fresh (< 30s old)
+    if (isCacheFresh(cached)) return;
+
+    // 3. Fetch fresh in background
     setRefreshing(true);
 
     try {
@@ -56,7 +59,6 @@ export default function Transactions() {
         setHasMore(data.hasMore);
         setHasCached(true);
         setPage(1);
-        // Cache the result
         setCache(key, {
           txs: data.transactions,
           total: data.total,

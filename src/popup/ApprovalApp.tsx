@@ -314,8 +314,394 @@ function SignAminoApproval({ request }: { request: PendingRequest }) {
   );
 }
 
+/**
+ * Decode protobuf body bytes into human-readable messages.
+ * Handles MsgSend, MsgExecuteContract, and falls back to showing typeUrl + raw data.
+ */
+function decodeBodyBytes(bodyBytesRaw: any): { messages: any[]; memo: string } {
+  try {
+    const bytes = toUint8ArrayFromAny(bodyBytesRaw);
+    if (bytes.length === 0) return { messages: [], memo: "" };
+
+    const decoded = decodeTxBody(bytes);
+    return {
+      messages: decoded.messages.map((msg) => {
+        try {
+          if (msg.typeUrl === "/cosmwasm.wasm.v1.MsgExecuteContract") {
+            return decodeExecuteContract(msg);
+          }
+          if (msg.typeUrl === "/cosmos.bank.v1beta1.MsgSend") {
+            return decodeMsgSend(msg);
+          }
+          if (msg.typeUrl === "/cosmos.staking.v1beta1.MsgDelegate") {
+            return decodeMsgDelegate(msg);
+          }
+          if (msg.typeUrl === "/cosmos.staking.v1beta1.MsgUndelegate") {
+            return decodeMsgDelegate(msg);
+          }
+          return { typeUrl: msg.typeUrl, value: msg.value ? toBase64Display(msg.value) : "(empty)" };
+        } catch {
+          return { typeUrl: msg.typeUrl, value: "(decode error)" };
+        }
+      }),
+      memo: decoded.memo,
+    };
+  } catch {
+    return { messages: [], memo: "" };
+  }
+}
+
+function toUint8ArrayFromAny(data: any): Uint8Array {
+  if (!data) return new Uint8Array(0);
+  if (data instanceof Uint8Array) return data;
+  if (Array.isArray(data)) return new Uint8Array(data);
+  if (data.type === "Buffer" && Array.isArray(data.data)) return new Uint8Array(data.data);
+  if (typeof data === "object") {
+    const keys = Object.keys(data);
+    if (keys.length > 0 && keys.every((k) => !isNaN(Number(k)))) {
+      return new Uint8Array(keys.sort((a, b) => Number(a) - Number(b)).map((k) => data[k]));
+    }
+  }
+  return new Uint8Array(0);
+}
+
+function toBase64Display(bytes: Uint8Array): string {
+  const arr = Array.from(bytes.slice(0, 64));
+  const hex = arr.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return bytes.length > 64 ? hex + `... (${bytes.length} bytes)` : hex;
+}
+
+/** Minimal protobuf TxBody decoder (field 1 = messages, field 2 = memo) */
+function decodeTxBody(bytes: Uint8Array): { messages: { typeUrl: string; value: Uint8Array }[]; memo: string } {
+  const messages: { typeUrl: string; value: Uint8Array }[] = [];
+  let memo = "";
+  let pos = 0;
+
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+
+      if (fieldNumber === 1) {
+        const msg = decodeAny(fieldBytes);
+        messages.push(msg);
+      } else if (fieldNumber === 2) {
+        memo = new TextDecoder().decode(fieldBytes);
+      }
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    } else if (wireType === 5) {
+      pos += 4;
+    } else if (wireType === 1) {
+      pos += 8;
+    }
+  }
+
+  return { messages, memo };
+}
+
+function decodeAny(bytes: Uint8Array): { typeUrl: string; value: Uint8Array } {
+  let typeUrl = "";
+  let value = new Uint8Array(0);
+  let pos = 0;
+
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+
+      if (fieldNumber === 1) typeUrl = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 2) value = fieldBytes;
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    }
+  }
+
+  return { typeUrl, value };
+}
+
+function readVarint(bytes: Uint8Array, pos: number): [number, number] {
+  let result = 0;
+  let shift = 0;
+  while (pos < bytes.length) {
+    const b = bytes[pos++];
+    result |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+  }
+  return [result >>> 0, pos];
+}
+
+function decodeExecuteContract(msg: { typeUrl: string; value: Uint8Array }): any {
+  let sender = "", contract = "", jsonMsg: any = null;
+  const funds: { denom: string; amount: string }[] = [];
+  let pos = 0;
+  const bytes = msg.value;
+
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+
+      if (fieldNumber === 1) sender = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 2) contract = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 3) {
+        try { jsonMsg = JSON.parse(new TextDecoder().decode(fieldBytes)); }
+        catch { jsonMsg = new TextDecoder().decode(fieldBytes); }
+      }
+      else if (fieldNumber === 5) {
+        funds.push(decodeCoin(fieldBytes));
+      }
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    }
+  }
+
+  return {
+    typeUrl: msg.typeUrl,
+    sender,
+    contract,
+    msg: jsonMsg,
+    funds: funds.length > 0 ? funds : undefined,
+  };
+}
+
+function decodeMsgSend(msg: { typeUrl: string; value: Uint8Array }): any {
+  let fromAddress = "", toAddress = "";
+  const amount: { denom: string; amount: string }[] = [];
+  let pos = 0;
+  const bytes = msg.value;
+
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+
+      if (fieldNumber === 1) fromAddress = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 2) toAddress = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 3) amount.push(decodeCoin(fieldBytes));
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    }
+  }
+
+  return { typeUrl: msg.typeUrl, fromAddress, toAddress, amount };
+}
+
+function decodeMsgDelegate(msg: { typeUrl: string; value: Uint8Array }): any {
+  let delegatorAddress = "", validatorAddress = "";
+  let coin: { denom: string; amount: string } | null = null;
+  let pos = 0;
+  const bytes = msg.value;
+
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+
+      if (fieldNumber === 1) delegatorAddress = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 2) validatorAddress = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 3) coin = decodeCoin(fieldBytes);
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    }
+  }
+
+  return { typeUrl: msg.typeUrl, delegatorAddress, validatorAddress, amount: coin };
+}
+
+function decodeCoin(bytes: Uint8Array): { denom: string; amount: string } {
+  let denom = "", amount = "";
+  let pos = 0;
+  while (pos < bytes.length) {
+    const [fieldTag, newPos] = readVarint(bytes, pos);
+    pos = newPos;
+    const fieldNumber = fieldTag >> 3;
+    const wireType = fieldTag & 0x7;
+
+    if (wireType === 2) {
+      const [len, lenPos] = readVarint(bytes, pos);
+      pos = lenPos;
+      const fieldBytes = bytes.slice(pos, pos + len);
+      pos += len;
+      if (fieldNumber === 1) denom = new TextDecoder().decode(fieldBytes);
+      else if (fieldNumber === 2) amount = new TextDecoder().decode(fieldBytes);
+    } else if (wireType === 0) {
+      const [, vPos] = readVarint(bytes, pos);
+      pos = vPos;
+    }
+  }
+  return { denom, amount };
+}
+
+/** Format ngonka amounts to human-readable GNK */
+function formatAmount(amount: string, denom: string): string {
+  if (denom === "ngonka" && amount) {
+    const gnk = Number(amount) / 1_000_000_000;
+    return `${gnk} GNK`;
+  }
+  return `${amount} ${denom}`;
+}
+
+/** Shorten a bech32 address for display */
+function shortAddr(addr: string): string {
+  if (addr.length <= 20) return addr;
+  return addr.slice(0, 12) + "..." + addr.slice(-8);
+}
+
+/** Render a decoded message in a human-readable way */
+function DecodedMessage({ msg, index }: { msg: any; index: number }) {
+  const typeShort = msg.typeUrl?.split(".").pop() || msg.typeUrl || "Unknown";
+
+  if (msg.typeUrl === "/cosmwasm.wasm.v1.MsgExecuteContract") {
+    const action = msg.msg ? Object.keys(msg.msg)[0] : "execute";
+    return (
+      <div className="bg-black/20 rounded-xl p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-gonka-400">{typeShort}</span>
+          <span className="text-[10px] text-surface-600">#{index + 1}</span>
+        </div>
+        <div className="space-y-1.5">
+          <div>
+            <span className="text-[10px] text-surface-500">Action</span>
+            <p className="text-xs font-semibold text-gonka-300">{action}</p>
+          </div>
+          <div>
+            <span className="text-[10px] text-surface-500">Contract</span>
+            <p className="text-[10px] font-mono text-surface-400 break-all">{msg.contract}</p>
+          </div>
+          {msg.msg && (
+            <div>
+              <span className="text-[10px] text-surface-500">Message</span>
+              <pre className="text-[10px] text-surface-300 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed mt-0.5 bg-black/20 rounded-lg p-2">
+                {JSON.stringify(msg.msg, null, 2)}
+              </pre>
+            </div>
+          )}
+          {msg.funds && msg.funds.length > 0 && (
+            <div>
+              <span className="text-[10px] text-surface-500">Funds</span>
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {msg.funds.map((f: any, i: number) => (
+                  <span key={i} className="text-[11px] font-medium text-yellow-300 bg-yellow-500/10 px-2 py-0.5 rounded-lg">
+                    {formatAmount(f.amount, f.denom)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (msg.typeUrl === "/cosmos.bank.v1beta1.MsgSend") {
+    return (
+      <div className="bg-black/20 rounded-xl p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-gonka-400">{typeShort}</span>
+          <span className="text-[10px] text-surface-600">#{index + 1}</span>
+        </div>
+        <div className="space-y-1.5">
+          <div className="flex justify-between">
+            <span className="text-[10px] text-surface-500">From</span>
+            <span className="text-[10px] font-mono text-surface-400">{shortAddr(msg.fromAddress)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[10px] text-surface-500">To</span>
+            <span className="text-[10px] font-mono text-surface-400">{shortAddr(msg.toAddress)}</span>
+          </div>
+          {msg.amount?.map((a: any, i: number) => (
+            <div key={i} className="flex justify-between">
+              <span className="text-[10px] text-surface-500">Amount</span>
+              <span className="text-[11px] font-medium text-yellow-300">{formatAmount(a.amount, a.denom)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (msg.typeUrl?.includes("MsgDelegate") || msg.typeUrl?.includes("MsgUndelegate")) {
+    return (
+      <div className="bg-black/20 rounded-xl p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-mono text-gonka-400">{typeShort}</span>
+          <span className="text-[10px] text-surface-600">#{index + 1}</span>
+        </div>
+        <div className="space-y-1.5">
+          <div>
+            <span className="text-[10px] text-surface-500">Delegator</span>
+            <p className="text-[10px] font-mono text-surface-400 break-all">{msg.delegatorAddress}</p>
+          </div>
+          <div>
+            <span className="text-[10px] text-surface-500">Validator</span>
+            <p className="text-[10px] font-mono text-surface-400 break-all">{msg.validatorAddress}</p>
+          </div>
+          {msg.amount && (
+            <div className="flex justify-between">
+              <span className="text-[10px] text-surface-500">Amount</span>
+              <span className="text-[11px] font-medium text-yellow-300">{formatAmount(msg.amount.amount, msg.amount.denom)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-black/20 rounded-xl p-3">
+      <p className="text-[11px] font-mono text-gonka-400 mb-1.5">{msg.typeUrl || "Unknown"}</p>
+      <pre className="text-[10px] text-surface-400 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
+        {typeof msg.value === "string" ? msg.value : JSON.stringify(msg, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
 function SignDirectApproval({ request }: { request: PendingRequest }) {
   const { chainId, signer, signDoc } = request.params || {};
+  const { messages, memo } = decodeBodyBytes(signDoc?.bodyBytes);
 
   return (
     <div>
@@ -329,7 +715,7 @@ function SignDirectApproval({ request }: { request: PendingRequest }) {
         </div>
         <h2 className="text-base font-bold mb-1">Sign Transaction</h2>
         <p className="text-sm text-surface-400">
-          Review and approve this transaction (Protobuf)
+          Review and approve this transaction
         </p>
       </div>
 
@@ -343,17 +729,35 @@ function SignDirectApproval({ request }: { request: PendingRequest }) {
           <span className="text-xs text-surface-500">Signer</span>
           <p className="text-xs font-mono text-surface-300 break-all mt-0.5">{signer}</p>
         </div>
+
+        {messages.length > 0 && (
+          <>
+            <div className="border-t border-white/[0.04]" />
+            <div>
+              <p className="text-xs text-surface-500 mb-2">Messages ({messages.length})</p>
+              <div className="space-y-2">
+                {messages.map((msg, i) => (
+                  <DecodedMessage key={i} msg={msg} index={i} />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {memo && (
+          <>
+            <div className="border-t border-white/[0.04]" />
+            <div className="flex justify-between">
+              <span className="text-xs text-surface-500">Memo</span>
+              <span className="text-xs text-surface-300">{memo}</span>
+            </div>
+          </>
+        )}
+
         <div className="border-t border-white/[0.04]" />
         <div className="flex justify-between">
           <span className="text-xs text-surface-500">Account #</span>
           <span className="text-xs font-mono text-surface-300">{signDoc?.accountNumber || "0"}</span>
-        </div>
-        <div className="border-t border-white/[0.04]" />
-        <div>
-          <p className="text-xs text-surface-500 mb-1">Body bytes</p>
-          <p className="text-[10px] font-mono text-surface-500 break-all bg-black/20 rounded-lg p-2">
-            {signDoc?.bodyBytes?.length || 0} bytes
-          </p>
         </div>
       </div>
     </div>

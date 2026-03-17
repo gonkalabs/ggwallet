@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/popup/store";
 import { fetchTransactions, Transaction } from "@/lib/api";
-import { getCache, setCache, cacheKey } from "@/lib/cache";
+import { getCache, setCache, cacheKey, isCacheFresh } from "@/lib/cache";
 import Layout from "@/popup/components/Layout";
 import BalanceCard from "@/popup/components/BalanceCard";
 import TxItem from "@/popup/components/TxItem";
@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [refreshingTxs, setRefreshingTxs] = useState(false);
   const mountedRef = useRef(true);
 
-  // Load cached data first, then refresh in background
+  // Load cached data first, then refresh in background only if stale
   const loadData = useCallback(async () => {
     if (!address) return;
 
@@ -40,7 +40,6 @@ export default function Dashboard() {
     ]);
 
     if (cachedBal) {
-      // Handle both old cache format (plain string) and new format (object)
       const cached = cachedBal.data;
       if (typeof cached === "string") {
         useWalletStore.setState({ balance: cached, tokenBalances: [] });
@@ -57,39 +56,45 @@ export default function Dashboard() {
       setHasCachedTxs(true);
     }
 
-    // 2. Fetch fresh data in background
-    setRefreshingBal(true);
-    setRefreshingTxs(true);
+    // 2. Skip background refresh if cache is fresh (< 30s old)
+    const balFresh = isCacheFresh(cachedBal);
+    const txFresh = isCacheFresh(cachedTxs);
 
-    // Balance
-    getBalance()
-      .then(() => {
-        if (mountedRef.current) {
-          setHasCachedBal(true);
-          setRefreshingBal(false);
-          // Cache the fresh balance
-          const { balance: freshBalance, tokenBalances: freshTokenBalances } =
-            useWalletStore.getState();
-          setCache(balKey, { balance: freshBalance, tokenBalances: freshTokenBalances });
-        }
-      })
-      .catch(() => {
-        if (mountedRef.current) setRefreshingBal(false);
-      });
+    if (balFresh && txFresh) return;
 
-    // Transactions
-    fetchTransactions(address, 1, 5)
-      .then((data) => {
-        if (mountedRef.current) {
-          setTxs(data.transactions);
-          setHasCachedTxs(true);
-          setRefreshingTxs(false);
-          setCache(txKey, data.transactions);
-        }
-      })
-      .catch(() => {
-        if (mountedRef.current) setRefreshingTxs(false);
-      });
+    // 3. Fetch stale data in background
+    if (!balFresh) {
+      setRefreshingBal(true);
+      getBalance()
+        .then(() => {
+          if (mountedRef.current) {
+            setHasCachedBal(true);
+            setRefreshingBal(false);
+            const { balance: freshBalance, tokenBalances: freshTokenBalances } =
+              useWalletStore.getState();
+            setCache(balKey, { balance: freshBalance, tokenBalances: freshTokenBalances });
+          }
+        })
+        .catch(() => {
+          if (mountedRef.current) setRefreshingBal(false);
+        });
+    }
+
+    if (!txFresh) {
+      setRefreshingTxs(true);
+      fetchTransactions(address, 1, 5)
+        .then((data) => {
+          if (mountedRef.current) {
+            setTxs(data.transactions);
+            setHasCachedTxs(true);
+            setRefreshingTxs(false);
+            setCache(txKey, data.transactions);
+          }
+        })
+        .catch(() => {
+          if (mountedRef.current) setRefreshingTxs(false);
+        });
+    }
   }, [address, getBalance]);
 
   useEffect(() => {
@@ -103,6 +108,45 @@ export default function Dashboard() {
       mountedRef.current = false;
     };
   }, [loadData, activeIndex]);
+
+  // Force-refresh balance (bypasses cache freshness check)
+  const forceRefreshBalance = useCallback(async () => {
+    if (!address || refreshingBal) return;
+    const balKey = cacheKey(address, "balance");
+    setRefreshingBal(true);
+    getBalance()
+      .then(() => {
+        if (mountedRef.current) {
+          setHasCachedBal(true);
+          setRefreshingBal(false);
+          const { balance: freshBalance, tokenBalances: freshTokenBalances } =
+            useWalletStore.getState();
+          setCache(balKey, { balance: freshBalance, tokenBalances: freshTokenBalances });
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) setRefreshingBal(false);
+      });
+  }, [address, getBalance, refreshingBal]);
+
+  // Force-refresh transactions (bypasses cache freshness check)
+  const forceRefreshTxs = useCallback(async () => {
+    if (!address || refreshingTxs) return;
+    const txKey = cacheKey(address, "recent_txs");
+    setRefreshingTxs(true);
+    fetchTransactions(address, 1, 5)
+      .then((data) => {
+        if (mountedRef.current) {
+          setTxs(data.transactions);
+          setHasCachedTxs(true);
+          setRefreshingTxs(false);
+          setCache(txKey, data.transactions);
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) setRefreshingTxs(false);
+      });
+  }, [address, refreshingTxs]);
 
   // Determine loading states: show spinner only if no cached data
   const showBalSkeleton = !hasCachedBal;
@@ -118,6 +162,7 @@ export default function Dashboard() {
           address={address}
           loading={showBalSkeleton}
           refreshing={refreshingBal}
+          onRefresh={forceRefreshBalance}
         />
 
         {/* Quick actions */}
@@ -130,7 +175,7 @@ export default function Dashboard() {
             Watch-only — cannot sign transactions
           </div>
         )}
-        <div className="grid grid-cols-3 gap-2 animate-fade-in-up" style={{ animationDelay: "0.05s", animationFillMode: "backwards" }}>
+        <div className="grid grid-cols-4 gap-2 animate-fade-in-up" style={{ animationDelay: "0.05s", animationFillMode: "backwards" }}>
           <ActionButton
             label="Send"
             onClick={() => navigate("/send")}
@@ -147,6 +192,16 @@ export default function Dashboard() {
             icon={
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 4.5l-15 15m0 0h11.25m-11.25 0V8.25" />
+              </svg>
+            }
+          />
+          <ActionButton
+            label="Names"
+            onClick={() => navigate("/names")}
+            icon={
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
               </svg>
             }
           />
@@ -168,9 +223,19 @@ export default function Dashboard() {
               <h2 className="text-sm font-semibold text-surface-300">
                 Recent Activity
               </h2>
-              {refreshingTxs && hasCachedTxs && (
+              {refreshingTxs && hasCachedTxs ? (
                 <Spinner size="sm" className="!w-3 !h-3 !text-surface-600" />
-              )}
+              ) : hasCachedTxs ? (
+                <button
+                  onClick={forceRefreshTxs}
+                  className="p-0.5 text-surface-600 hover:text-gonka-400 transition-colors rounded-lg hover:bg-white/[0.04] active:scale-90"
+                  title="Refresh transactions"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M20.015 4.356v4.992" />
+                  </svg>
+                </button>
+              ) : null}
             </div>
             <button
               onClick={() => navigate("/transactions")}

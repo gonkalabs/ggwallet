@@ -368,14 +368,18 @@ export default function Settings() {
             Auto-Lock
           </h3>
           <div className="card">
-            <p className="text-xs text-surface-500 mb-3">Lock wallet after period of inactivity</p>
+            <p className="text-xs text-surface-500 mb-1">Lock wallet after closing the extension</p>
+            <p className="text-[10px] text-surface-600 mb-3">
+              Wallet never locks while the popup is open. Timer starts when you close it.
+            </p>
             <div className="flex flex-wrap gap-2">
               {[
+                { label: "Never", value: 0 },
+                { label: "On close", value: -1 },
                 { label: "1 min", value: 1 },
                 { label: "5 min", value: 5 },
                 { label: "15 min", value: 15 },
                 { label: "30 min", value: 30 },
-                { label: "Never", value: 0 },
               ].map(({ label, value }) => (
                 <button
                   key={value}
@@ -430,6 +434,26 @@ export default function Settings() {
                 </svg>
               }
               danger
+            />
+          </div>
+        </div>
+
+        {/* GNS Names */}
+        <div>
+          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+            GNS Names
+          </h3>
+          <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
+            <SettingsRow
+              label="Manage .gnk Names"
+              description="Transfer, configure, and list your names"
+              onClick={() => navigate("/names")}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6z" />
+                </svg>
+              }
             />
           </div>
         </div>

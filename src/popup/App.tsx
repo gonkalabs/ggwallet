@@ -15,6 +15,7 @@ import AddWallet from "@/popup/pages/AddWallet";
 import Proposals from "@/popup/pages/Proposals";
 import ProposalDetail from "@/popup/pages/ProposalDetail";
 import CreateProposal from "@/popup/pages/CreateProposal";
+import GnsNames from "@/popup/pages/GnsNames";
 import Spinner from "@/popup/components/Spinner";
 
 export default function App() {
@@ -23,6 +24,17 @@ export default function App() {
 
   useEffect(() => {
     checkState().finally(() => setLoading(false));
+  }, [checkState]);
+
+  // Listen for background lock/unlock events and re-sync UI state
+  useEffect(() => {
+    const listener = (message: any) => {
+      if (message.type === "KEYSTORE_CHANGED") {
+        checkState();
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
   }, [checkState]);
 
   if (loading) {
@@ -59,6 +71,7 @@ export default function App() {
             <Route path="/proposals" element={<Proposals />} />
             <Route path="/proposals/create" element={<CreateProposal />} />
             <Route path="/proposals/:id" element={<ProposalDetail />} />
+            <Route path="/names" element={<GnsNames />} />
             <Route path="/add-wallet" element={<AddWallet />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </>

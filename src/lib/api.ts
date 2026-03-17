@@ -60,7 +60,6 @@ export async function fetchTransactions(
   );
   url.searchParams.set("page", String(page));
   url.searchParams.set("page_size", String(pageSize));
-  url.searchParams.set("source", "live");
   url.searchParams.set("direction", direction);
   url.searchParams.set("fetch_timestamps", "true");
 

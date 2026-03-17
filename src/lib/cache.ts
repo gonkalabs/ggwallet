@@ -5,6 +5,9 @@
 
 const CACHE_PREFIX = "gg_cache_";
 
+/** Default staleness threshold: skip background refresh if cache is younger than this */
+const DEFAULT_FRESH_MS = 30_000; // 30 seconds
+
 export interface CacheEntry<T> {
   data: T;
   ts: number; // timestamp of when cached
@@ -28,9 +31,14 @@ export async function setCache<T>(key: string, data: T): Promise<void> {
   });
 }
 
+/** Returns true if the cache entry is still fresh (younger than `freshMs`). */
+export function isCacheFresh<T>(entry: CacheEntry<T> | null, freshMs = DEFAULT_FRESH_MS): boolean {
+  if (!entry) return false;
+  return Date.now() - entry.ts < freshMs;
+}
+
 /** Build a cache key scoped to a specific address */
 export function cacheKey(address: string, purpose: string): string {
-  // Use last 12 chars of address to keep keys short
   const short = address.slice(-12);
   return `${short}_${purpose}`;
 }

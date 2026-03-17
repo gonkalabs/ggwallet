@@ -14,7 +14,7 @@ import { encrypt, decrypt } from "@/lib/crypto";
 import { storageGet, storageSet, storageRemove, KEYS, WalletEntry } from "@/lib/storage";
 import { deriveAddress, derivePrivateKey } from "@/lib/cosmos";
 
-const DEFAULT_AUTO_LOCK_MINUTES = 5;
+const DEFAULT_AUTO_LOCK_MINUTES = 0; // Default: never auto-lock while open
 let _autoLockMs = DEFAULT_AUTO_LOCK_MINUTES * 60 * 1000;
 
 let _mnemonic: string | null = null;
@@ -24,8 +24,20 @@ let _activeIndex: number = 0;
 let _viewOnly: boolean = false;
 let _lockTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Track whether any popup/tab of our extension is open
+let _popupOpen = false;
+
+// Whether we've attempted to rehydrate from session storage on this SW lifecycle
+let _rehydrated = false;
+
 // Key used to persist the lock deadline across service worker restarts
 const LOCK_DEADLINE_KEY = "gg_lock_deadline";
+
+// Keys for persisting unlock state across service worker restarts.
+// Stored in chrome.storage.session which survives SW restarts but is
+// cleared when the browser closes — so secrets never touch disk.
+const SESSION_PASSWORD_KEY = "gg_session_pwd";
+const SESSION_UNLOCKED_KEY = "gg_session_unlocked";
 
 // ------------------------------------------------------------------ //
 //  Wallet CRUD
@@ -74,6 +86,7 @@ export async function addWallet(
   _address = address;
   _activeIndex = index;
   resetLockTimer();
+  persistSessionUnlock(pwd);
 
   return { address, index };
 }
@@ -207,7 +220,6 @@ export async function unlock(password: string): Promise<string> {
   const entry = wallets[activeIdx] || wallets[0];
 
   if (entry.viewOnly) {
-    // View-only wallet: verify password against first non-view-only wallet if one exists.
     const regularWallet = wallets.find((w) => !w.viewOnly);
     if (regularWallet) {
       await decrypt(regularWallet.ciphertext, regularWallet.salt, regularWallet.iv, password);
@@ -226,6 +238,9 @@ export async function unlock(password: string): Promise<string> {
   _activeIndex = activeIdx;
   resetLockTimer();
 
+  // Persist unlock state to session storage so we survive SW restarts
+  persistSessionUnlock(password);
+
   return _address;
 }
 
@@ -237,10 +252,67 @@ export function lock(): void {
   _password = null;
   _viewOnly = false;
   clearLockTimer();
-  // Clear the persisted deadline
-  chrome.storage.session.remove(LOCK_DEADLINE_KEY).catch(() => {
+  // Clear all persisted session state
+  chrome.storage.session.remove([LOCK_DEADLINE_KEY, SESSION_PASSWORD_KEY, SESSION_UNLOCKED_KEY]).catch(() => {
     chrome.storage.local.remove(LOCK_DEADLINE_KEY).catch(() => {});
   });
+}
+
+// ------------------------------------------------------------------ //
+//  Session persistence — survive service worker restarts
+// ------------------------------------------------------------------ //
+
+function persistSessionUnlock(password: string): void {
+  chrome.storage.session.set({
+    [SESSION_PASSWORD_KEY]: password,
+    [SESSION_UNLOCKED_KEY]: true,
+  }).catch(() => {});
+}
+
+/**
+ * Re-hydrate in-memory state from session storage after a service worker
+ * restart. If the wallet was unlocked before the SW was terminated, this
+ * re-decrypts the mnemonic so operations continue seamlessly.
+ *
+ * Called lazily on the first message that needs unlock state.
+ */
+export async function rehydrateIfNeeded(): Promise<void> {
+  if (_rehydrated) return;
+  _rehydrated = true;
+
+  // Already unlocked in memory — nothing to do
+  if (_mnemonic !== null || _viewOnly) return;
+
+  try {
+    const session = await chrome.storage.session.get([SESSION_PASSWORD_KEY, SESSION_UNLOCKED_KEY]);
+    if (!session[SESSION_UNLOCKED_KEY]) return;
+
+    const password = session[SESSION_PASSWORD_KEY] as string | undefined;
+    if (!password) return;
+
+    const wallets = await getWallets();
+    if (wallets.length === 0) return;
+
+    const activeIdx = (await storageGet<number>(KEYS.ACTIVE_INDEX)) ?? 0;
+    const entry = wallets[activeIdx] || wallets[0];
+
+    if (entry.viewOnly) {
+      _viewOnly = true;
+      _mnemonic = null;
+      _password = password;
+    } else {
+      const mnemonic = await decrypt(entry.ciphertext, entry.salt, entry.iv, password);
+      _mnemonic = mnemonic;
+      _password = password;
+      _viewOnly = false;
+    }
+
+    _address = entry.address;
+    _activeIndex = activeIdx;
+  } catch {
+    // Decryption failed (session data stale) — stay locked
+    chrome.storage.session.remove([SESSION_PASSWORD_KEY, SESSION_UNLOCKED_KEY]).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------------ //
@@ -323,6 +395,12 @@ function persistLockDeadline(deadlineMs: number): void {
 function resetLockTimer(): void {
   clearLockTimer();
   if (_autoLockMs === 0) return; // "Never" mode
+  if (_popupOpen) return; // Don't start timer while popup is open
+  if (_autoLockMs === -1) {
+    // "On close" mode — lock immediately (popup just closed)
+    lock();
+    return;
+  }
   const deadline = Date.now() + _autoLockMs;
   persistLockDeadline(deadline);
   _lockTimer = setTimeout(() => lock(), _autoLockMs);
@@ -335,9 +413,9 @@ function resetLockTimer(): void {
  * the in-memory setTimeout was lost.
  */
 export async function checkAlarmLock(): Promise<void> {
-  // Only relevant when the wallet is currently unlocked in memory
   if (!isUnlocked()) return;
-  if (_autoLockMs === 0) return;
+  if (_autoLockMs <= 0) return; // 0 = never, -1 = handled by popup close
+  if (_popupOpen) return; // Never lock while popup is open
 
   let deadline: number | undefined;
   try {
@@ -361,16 +439,18 @@ export async function checkAlarmLock(): Promise<void> {
 export async function loadSettings(): Promise<void> {
   const minutes = await storageGet<number>(KEYS.AUTO_LOCK_MINUTES);
   if (minutes !== undefined && minutes !== null) {
-    _autoLockMs = minutes === 0 ? 0 : minutes * 60 * 1000;
+    _autoLockMs = minutes <= 0 ? minutes : minutes * 60 * 1000;
   }
 }
 
 export function getAutoLockMinutes(): number {
-  return _autoLockMs === 0 ? 0 : Math.round(_autoLockMs / 60_000);
+  if (_autoLockMs <= 0) return _autoLockMs; // 0 = never, -1 = on close
+  return Math.round(_autoLockMs / 60_000);
 }
 
 export async function setAutoLockTimeout(minutes: number): Promise<void> {
-  _autoLockMs = minutes === 0 ? 0 : minutes * 60 * 1000;
+  // -1 = lock immediately on popup close, 0 = never, >0 = minutes after close
+  _autoLockMs = minutes <= 0 ? minutes : minutes * 60 * 1000;
   await storageSet({ [KEYS.AUTO_LOCK_MINUTES]: minutes });
   if (_mnemonic !== null || _viewOnly) resetLockTimer();
 }
@@ -386,6 +466,38 @@ export function touchActivity(): void {
   if (_mnemonic) {
     resetLockTimer();
   }
+}
+
+// ------------------------------------------------------------------ //
+//  Popup lifecycle tracking
+// ------------------------------------------------------------------ //
+
+/**
+ * Called when a popup/extension window opens.
+ * Pauses the auto-lock timer while the UI is visible.
+ */
+export function notifyPopupOpen(): void {
+  _popupOpen = true;
+  clearLockTimer();
+  // Clear persisted deadline so alarm handler doesn't lock while open
+  chrome.storage.session.remove(LOCK_DEADLINE_KEY).catch(() => {
+    chrome.storage.local.remove(LOCK_DEADLINE_KEY).catch(() => {});
+  });
+}
+
+/**
+ * Called when the last popup/extension window closes.
+ * Restarts the auto-lock timer.
+ */
+export function notifyPopupClosed(): void {
+  _popupOpen = false;
+  if (isUnlocked()) {
+    resetLockTimer();
+  }
+}
+
+export function isPopupOpen(): boolean {
+  return _popupOpen;
 }
 
 // ------------------------------------------------------------------ //
@@ -426,6 +538,7 @@ async function migrateLegacy(password: string): Promise<string | null> {
   _address = entry.address;
   _activeIndex = 0;
   resetLockTimer();
+  persistSessionUnlock(password);
 
   return _address;
 }
