@@ -15,25 +15,28 @@ export default function Receive() {
 
   return (
     <Layout title="Receive GNK" showBack showNav={false}>
-      <div className="flex flex-col items-center px-6 py-8 space-y-6">
-        {/* QR Code */}
-        <div className="bg-white p-4 rounded-3xl shadow-card">
-          <QRCodeSVG
-            value={address}
-            size={192}
-            level="M"
-            bgColor="#ffffff"
-            fgColor="#000000"
-          />
+      <div className="flex flex-col items-center px-6 py-6 space-y-5">
+        {/* QR Code — wrapped in LED bezel so the white QR reads as a screen */}
+        <div className="led-bezel">
+          <div className="bg-white p-4 rounded-xl">
+            <QRCodeSVG
+              value={address}
+              size={192}
+              level="M"
+              bgColor="#ffffff"
+              fgColor="#000000"
+            />
+          </div>
         </div>
 
         {/* Address */}
         <div className="w-full">
-          <p className="text-xs text-surface-500 text-center mb-2">
+          <p className="led-eyebrow justify-center mb-2">
+            <span className="led-eyebrow-dot" />
             Your Gonka Address
           </p>
-          <div className="bg-white/[0.03] rounded-2xl p-4">
-            <p className="text-xs font-mono text-surface-300 break-all text-center leading-relaxed">
+          <div className="led-panel p-4">
+            <p className="led-text text-[11px] font-bold text-white led-glow-soft break-all text-center leading-relaxed" style={{ letterSpacing: "0.06em" }}>
               {address}
             </p>
           </div>
@@ -61,9 +64,9 @@ export default function Receive() {
           )}
         </button>
 
-        <p className="text-xs text-surface-600 text-center max-w-[260px]">
-          Only send GNK (ngonka) tokens to this address. Sending other tokens
-          may result in permanent loss.
+        <p className="led-text text-[10px] font-medium text-white/40 text-center max-w-[260px]" style={{ letterSpacing: "0.04em" }}>
+          ▲ Only send GNK (ngonka) tokens to this address. Sending other
+          tokens may result in permanent loss.
         </p>
       </div>
     </Layout>

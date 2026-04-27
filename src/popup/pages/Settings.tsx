@@ -4,7 +4,7 @@ import { useWalletStore } from "@/popup/store";
 import { sendMessage } from "@/lib/messaging";
 import { truncateAddress } from "@/lib/format";
 import { GONKA_CHAIN_ID, GONKA_CHAIN_NAME, GONKA_BECH32_PREFIX } from "@/lib/gonka";
-import { KNOWN_ENDPOINTS, pingEndpoint, type RpcEndpoint } from "@/lib/rpc";
+import { KNOWN_ENDPOINTS, pingEndpoint, GONKA_RPC_SIGNUP_URL, type RpcEndpoint } from "@/lib/rpc";
 import type { ConnectedSite, AddressBookEntry } from "@/lib/storage";
 import Layout from "@/popup/components/Layout";
 import PasswordInput from "@/popup/components/PasswordInput";
@@ -53,6 +53,14 @@ export default function Settings() {
   const [customRest, setCustomRest] = useState("");
   const [rpcSaving, setRpcSaving] = useState(false);
 
+  // Gonka RPC API key (rpc.gonka.gg)
+  const [gonkaKey, setGonkaKey] = useState<string | null>(null);
+  const [gonkaKeyModal, setGonkaKeyModal] = useState(false);
+  const [gonkaKeyInput, setGonkaKeyInput] = useState("");
+  const [gonkaKeyVisible, setGonkaKeyVisible] = useState(false);
+  const [gonkaKeySaving, setGonkaKeySaving] = useState(false);
+  const [gonkaKeyError, setGonkaKeyError] = useState("");
+
   // Load all settings on mount
   useEffect(() => {
     sendMessage({ type: "GET_RPC_ENDPOINT" }).then((resp) => {
@@ -66,6 +74,9 @@ export default function Settings() {
     });
     sendMessage({ type: "GET_ADDRESS_BOOK" }).then((resp) => {
       if (resp.entries) setAddressBook(resp.entries);
+    });
+    sendMessage({ type: "GET_GONKA_RPC_KEY" }).then((resp) => {
+      setGonkaKey(resp?.key || null);
     });
   }, []);
 
@@ -142,6 +153,53 @@ export default function Settings() {
     setRpcSaving(false);
   };
 
+  const openGonkaKeyModal = () => {
+    setGonkaKeyInput("");
+    setGonkaKeyError("");
+    setGonkaKeyVisible(false);
+    setGonkaKeyModal(true);
+  };
+
+  const handleSaveGonkaKey = async () => {
+    const trimmed = gonkaKeyInput.trim();
+    if (!trimmed) {
+      setGonkaKeyError("API key is required");
+      return;
+    }
+    setGonkaKeySaving(true);
+    setGonkaKeyError("");
+    const resp = await sendMessage({ type: "SET_GONKA_RPC_KEY", key: trimmed });
+    setGonkaKeySaving(false);
+    if (resp?.success) {
+      setGonkaKey(trimmed);
+      // Reload active endpoint so the "RPC Endpoint" row reflects the override.
+      const rpcResp = await sendMessage({ type: "GET_RPC_ENDPOINT" });
+      if (rpcResp?.endpoint) setActiveRpc(rpcResp.endpoint);
+      setGonkaKeyModal(false);
+      setGonkaKeyInput("");
+    } else {
+      setGonkaKeyError(resp?.error || "Failed to save API key");
+    }
+  };
+
+  const handleClearGonkaKey = async () => {
+    setGonkaKeySaving(true);
+    setGonkaKeyError("");
+    const resp = await sendMessage({ type: "SET_GONKA_RPC_KEY", key: null });
+    setGonkaKeySaving(false);
+    if (resp?.success) {
+      setGonkaKey(null);
+      const rpcResp = await sendMessage({ type: "GET_RPC_ENDPOINT" });
+      if (rpcResp?.endpoint) setActiveRpc(rpcResp.endpoint);
+      setGonkaKeyModal(false);
+    } else {
+      setGonkaKeyError(resp?.error || "Failed to clear API key");
+    }
+  };
+
+  const maskedKey = (key: string) =>
+    key.length <= 10 ? key : `${key.slice(0, 8)}…${key.slice(-4)}`;
+
   const handleLock = async () => {
     await lock();
     navigate("/");
@@ -200,61 +258,71 @@ export default function Settings() {
     <Layout title="Settings">
       <div className="px-4 py-3 space-y-4">
         {/* Active wallet */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-surface-500">Active Wallet</p>
-            <span className="text-[10px] text-surface-600 tabular-nums">
-              {wallets.length} wallet{wallets.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-          {renaming ? (
-            <div className="flex gap-2 mb-1">
-              <input
-                className="input-field text-sm py-2 flex-1"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newName.trim()) {
-                    renameWallet(activeIndex, newName.trim());
+        <div className="led-bezel animate-fade-in-up">
+          <div className="led-display p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="led-eyebrow">
+                <span className="led-eyebrow-dot" />
+                Active Wallet
+              </span>
+              <span className="led-text text-[10px] font-bold text-white/40 tabular-nums">
+                {wallets.length} wallet{wallets.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            {renaming ? (
+              <div className="flex gap-2 mb-1">
+                <input
+                  className="input-field text-sm py-2 flex-1"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newName.trim()) {
+                      renameWallet(activeIndex, newName.trim());
+                      setRenaming(false);
+                    }
+                    if (e.key === "Escape") setRenaming(false);
+                  }}
+                />
+                <button
+                  onClick={() => {
+                    if (newName.trim()) renameWallet(activeIndex, newName.trim());
                     setRenaming(false);
-                  }
-                  if (e.key === "Escape") setRenaming(false);
-                }}
-              />
+                  }}
+                  className="led-text px-3 py-1.5 text-[10px] font-extrabold bg-white text-surface-950 rounded-xl transition-colors hover:bg-white/90"
+                >
+                  Save
+                </button>
+              </div>
+            ) : (
               <button
                 onClick={() => {
-                  if (newName.trim()) renameWallet(activeIndex, newName.trim());
-                  setRenaming(false);
+                  setNewName(activeWallet?.name || "");
+                  setRenaming(true);
                 }}
-                className="px-3 py-1.5 text-xs font-semibold bg-gonka-500 text-surface-950 rounded-xl transition-colors hover:bg-gonka-400"
+                className="led-title text-base hover:opacity-90 transition-opacity flex items-center gap-1.5"
               >
-                Save
+                {activeWallet?.name || "Wallet"}
+                <svg className="w-3 h-3 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+                </svg>
               </button>
+            )}
+            <div className="led-divider-top mt-3 pt-3 space-y-1">
+              <p className="led-text text-[10px] font-bold text-white/45">
+                {truncateAddress(address, 14, 10)}
+              </p>
+              <p className="led-spec text-[10px]">
+                {GONKA_CHAIN_NAME} · {GONKA_CHAIN_ID}
+              </p>
             </div>
-          ) : (
-            <button
-              onClick={() => {
-                setNewName(activeWallet?.name || "");
-                setRenaming(true);
-              }}
-              className="text-sm font-medium hover:text-gonka-400 transition-colors flex items-center gap-1.5"
-            >
-              {activeWallet?.name || "Wallet"}
-              <svg className="w-3 h-3 text-surface-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
-              </svg>
-            </button>
-          )}
-          <p className="text-xs font-mono text-surface-500 mt-0.5">{truncateAddress(address, 14, 10)}</p>
-          <p className="text-xs text-surface-600 mt-1">
-            {GONKA_CHAIN_NAME} ({GONKA_CHAIN_ID})
-          </p>
+          </div>
         </div>
 
         {/* Wallets */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Wallets
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -290,13 +358,18 @@ export default function Settings() {
 
         {/* Network / RPC */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Network
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
             <SettingsRow
               label="RPC Endpoint"
-              description={activeRpc?.label || "Loading..."}
+              description={
+                gonkaKey
+                  ? "rpc.gonka.gg (via API key)"
+                  : activeRpc?.label || "Loading..."
+              }
               onClick={() => {
                 setRpcModal(true);
                 runPings();
@@ -307,12 +380,27 @@ export default function Settings() {
                 </svg>
               }
             />
+            <SettingsRow
+              label="rpc.gonka.gg API Key"
+              description={
+                gonkaKey
+                  ? `Active — ${maskedKey(gonkaKey)} · faster tx history`
+                  : "Optional — unlocks a faster RPC + tx history"
+              }
+              onClick={openGonkaKeyModal}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                </svg>
+              }
+            />
           </div>
         </div>
 
         {/* Connected Sites */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Connected Sites
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -338,7 +426,8 @@ export default function Settings() {
 
         {/* Address Book */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Address Book
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -364,12 +453,15 @@ export default function Settings() {
 
         {/* Auto-Lock */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Auto-Lock
           </h3>
           <div className="card">
-            <p className="text-xs text-surface-500 mb-1">Lock wallet after closing the extension</p>
-            <p className="text-[10px] text-surface-600 mb-3">
+            <p className="led-text text-[11px] font-bold text-white/70 mb-1">
+              Lock wallet after closing the extension
+            </p>
+            <p className="led-text text-[10px] font-medium text-white/35 mb-3 normal-case" style={{ textTransform: "none", letterSpacing: "0.01em" }}>
               Wallet never locks while the popup is open. Timer starts when you close it.
             </p>
             <div className="flex flex-wrap gap-2">
@@ -385,11 +477,16 @@ export default function Settings() {
                   key={value}
                   disabled={autoLockSaving}
                   onClick={() => handleSaveAutoLock(value)}
-                  className={`px-3.5 py-1.5 text-xs font-semibold rounded-full border transition-all duration-200 ${
+                  className={`led-text px-3.5 py-1.5 text-[10px] font-extrabold rounded-md border transition-all duration-200 ${
                     autoLockMinutes === value
-                      ? "bg-gonka-500/15 text-gonka-400 border-gonka-500/25"
-                      : "bg-white/[0.04] text-surface-400 border-transparent hover:bg-white/[0.06]"
+                      ? "bg-white text-surface-950 border-white"
+                      : "bg-transparent text-white/55 border-white/15 hover:border-white/35 hover:text-white"
                   }`}
+                  style={
+                    autoLockMinutes === value
+                      ? { boxShadow: "0 0 12px -2px rgba(255,255,255,0.4)" }
+                      : undefined
+                  }
                 >
                   {label}
                 </button>
@@ -400,7 +497,8 @@ export default function Settings() {
 
         {/* Security */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Security
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -440,7 +538,8 @@ export default function Settings() {
 
         {/* GNS Names */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             GNS Names
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -460,7 +559,8 @@ export default function Settings() {
 
         {/* Governance */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Governance
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
@@ -479,7 +579,8 @@ export default function Settings() {
 
         {/* Node Operations */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             Node Operations
           </h3>
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0 relative">
@@ -498,7 +599,7 @@ export default function Settings() {
             />
             {comingSoon && (
               <div className="absolute inset-x-0 -bottom-9 flex justify-center animate-fade-in-up">
-                <span className="text-xs text-surface-400 bg-surface-800 border border-white/[0.06] px-3 py-1.5 rounded-full shadow-card">
+                <span className="led-text text-[10px] font-extrabold text-white/70 bg-led-bg border border-white/15 px-3 py-1.5 rounded-md shadow-card">
                   Coming in a future update
                 </span>
               </div>
@@ -508,29 +609,34 @@ export default function Settings() {
 
         {/* About */}
         <div>
-          <h3 className="text-xs font-semibold text-surface-500 uppercase tracking-wider mb-2">
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
             About
           </h3>
-          <div className="card text-xs text-surface-500 space-y-1.5">
-            <p className="text-surface-300 font-medium">GG Wallet v0.1.6</p>
-            <p>Open-source, community wallet for the Gonka.ai blockchain</p>
-            <div className="flex items-center gap-3 pt-1">
+          <div className="card space-y-2">
+            <p className="led-text text-[12px] font-extrabold text-white led-glow-soft">
+              GG Wallet · v0.1.7
+            </p>
+            <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
+              Open-source, community wallet for the Gonka.ai blockchain
+            </p>
+            <div className="flex items-center gap-3 pt-1 led-divider-top mt-2">
               <a
                 href="https://gonka.ai"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gonka-400 hover:text-gonka-300 transition-colors"
+                className="led-text text-[10px] font-bold text-white hover:text-white/80 transition-colors mt-2 led-glow-soft"
               >
-                gonka.ai
+                gonka.ai →
               </a>
-              <span className="text-surface-700">|</span>
+              <span className="text-white/15 mt-2">|</span>
               <a
                 href="https://gonkalabs.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-surface-400 hover:text-surface-300 transition-colors"
+                className="led-text text-[10px] font-bold text-white/55 hover:text-white transition-colors mt-2"
               >
-                open-source by <span className="text-surface-300">gonkalabs</span>
+                by gonkalabs →
               </a>
             </div>
           </div>
@@ -540,9 +646,9 @@ export default function Settings() {
       {/* Reveal modal */}
       {revealType && (
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
-          <div className="w-full bg-surface-900 border-t border-white/[0.06] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal">
+          <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">
+              <h3 className="led-title text-base">
                 {revealType === "mnemonic" ? "Recovery Phrase" : "Private Key"}
               </h3>
               <button
@@ -557,11 +663,11 @@ export default function Settings() {
 
             {!revealData ? (
               <>
-                <div className="bg-red-500/5 border border-red-500/10 rounded-2xl p-3.5">
-                  <p className="text-xs text-red-200/70">
-                    Warning: Never share your{" "}
+                <div className="led-panel p-3.5 border-red-500/30">
+                  <p className="led-text text-[11px] font-bold text-red-300/90" style={{ letterSpacing: "0.05em" }}>
+                    ▲ Warning · Never share your{" "}
                     {revealType === "mnemonic" ? "recovery phrase" : "private key"}{" "}
-                    with anyone. Anyone with access to it can steal your funds.
+                    with anyone. Anyone with access can steal your funds.
                   </p>
                 </div>
 
@@ -597,13 +703,14 @@ export default function Settings() {
               </>
             ) : (
               <>
-                <div className="bg-white/[0.03] rounded-2xl p-4">
+                <div className="led-panel p-4">
                   <p
-                    className={`text-sm ${
+                    className={`text-white led-glow-soft ${
                       revealType === "mnemonic"
-                        ? "leading-relaxed"
+                        ? "led-text text-[12px] font-bold leading-relaxed"
                         : "font-mono break-all text-xs"
                     }`}
+                    style={revealType === "mnemonic" ? { letterSpacing: "0.06em" } : undefined}
                   >
                     {revealData}
                   </p>
@@ -636,9 +743,9 @@ export default function Settings() {
       {/* RPC modal */}
       {rpcModal && (
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
-          <div className="w-full bg-surface-900 border-t border-white/[0.06] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[85%] flex flex-col">
+          <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[85%] flex flex-col">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">RPC Endpoint</h3>
+              <h3 className="led-title text-base">RPC Endpoint</h3>
               <button
                 onClick={() => setRpcModal(false)}
                 className="p-1.5 hover:bg-white/5 rounded-xl transition-colors"
@@ -648,6 +755,23 @@ export default function Settings() {
                 </svg>
               </button>
             </div>
+
+            {gonkaKey && (
+              <div className="led-panel p-3 shrink-0">
+                <div className="flex items-start gap-2">
+                  <span className="led-eyebrow-dot mt-1 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="led-text text-[11px] font-extrabold text-white led-glow-soft">
+                      rpc.gonka.gg API key is active
+                    </p>
+                    <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
+                      All RPC/REST calls go through rpc.gonka.gg. Clear the key in
+                      Settings to switch back to another node.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="overflow-y-auto flex-1 -mx-1 px-1 space-y-1.5">
               {KNOWN_ENDPOINTS.map((ep) => {
@@ -669,34 +793,36 @@ export default function Settings() {
                     key={ep.rpc}
                     onClick={() => selectEndpoint(ep)}
                     disabled={rpcSaving}
-                    className={`flex items-center gap-3 w-full p-3 rounded-2xl text-left transition-all duration-200 ${
+                    className={`flex items-center gap-3 w-full p-3 rounded-xl text-left transition-all duration-200 border ${
                       isActive
-                        ? "bg-gonka-500/10 border border-gonka-500/25"
-                        : "bg-white/[0.02] border border-transparent hover:bg-white/[0.04]"
+                        ? "bg-white/[0.06] border-white/30"
+                        : "bg-transparent border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
                     }`}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium truncate">{ep.label}</p>
+                        <p className="led-text text-[12px] font-extrabold text-white truncate">
+                          {ep.label}
+                        </p>
                         {isActive && (
-                          <span className="text-[10px] font-medium text-gonka-400 bg-gonka-500/10 px-1.5 py-0.5 rounded-full">
-                            active
+                          <span className="led-text text-[9px] font-extrabold text-surface-950 bg-white px-1.5 py-0.5 rounded-[3px]" style={{ boxShadow: "0 0 6px rgba(255,255,255,0.4)" }}>
+                            ACTIVE
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] font-mono text-surface-500 truncate mt-0.5">
+                      <p className="led-text text-[10px] font-medium text-white/40 truncate mt-0.5" style={{ letterSpacing: "0.04em" }}>
                         {ep.rpc}
                       </p>
                     </div>
-                    <div className={`text-xs font-medium tabular-nums shrink-0 ${pingColor}`}>
+                    <div className={`led-text text-[10px] font-extrabold tabular-nums shrink-0 ${pingColor}`}>
                       {pinging ? (
-                        <div className="w-3 h-3 border border-surface-600 border-t-transparent rounded-full animate-spin" />
+                        <div className="w-3 h-3 border border-white/30 border-t-transparent rounded-full animate-spin" />
                       ) : ping === undefined ? (
                         "..."
                       ) : ping < 0 ? (
-                        "err"
+                        "ERR"
                       ) : (
-                        `${ping}ms`
+                        `${ping}MS`
                       )}
                     </div>
                   </button>
@@ -705,8 +831,11 @@ export default function Settings() {
             </div>
 
             {/* Custom RPC */}
-            <div className="space-y-2 pt-1 border-t border-white/[0.04]">
-              <p className="text-xs font-medium text-surface-400">Custom endpoint</p>
+            <div className="space-y-2 pt-3 led-divider-top">
+              <p className="led-eyebrow">
+                <span className="led-eyebrow-dot" />
+                Custom endpoint
+              </p>
               <input
                 type="text"
                 className="input-field text-xs font-mono py-2.5"
@@ -738,7 +867,7 @@ export default function Settings() {
             <button
               onClick={() => runPings()}
               disabled={pinging}
-              className="w-full py-2 text-xs text-gonka-400 hover:text-gonka-300 transition-colors flex items-center justify-center gap-1.5"
+              className="led-text w-full py-2 text-[10px] font-extrabold text-white/55 hover:text-white transition-colors flex items-center justify-center gap-1.5"
             >
               {pinging ? (
                 <>
@@ -746,18 +875,131 @@ export default function Settings() {
                   Pinging...
                 </>
               ) : (
-                "Refresh latency"
+                "↻ Refresh latency"
               )}
             </button>
           </div>
         </div>
       )}
+
+      {/* Gonka RPC API Key modal */}
+      {gonkaKeyModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
+          <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[90%] flex flex-col">
+            <div className="flex items-center justify-between shrink-0">
+              <h3 className="led-title text-base">rpc.gonka.gg API Key</h3>
+              <button
+                onClick={() => setGonkaKeyModal(false)}
+                className="p-1.5 hover:bg-white/5 rounded-xl transition-colors"
+              >
+                <svg className="w-5 h-5 text-surface-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 -mx-1 px-1 space-y-4">
+              <div className="led-panel p-3.5 space-y-2">
+                <div className="flex items-start gap-2">
+                  <span className="led-eyebrow-dot mt-1 shrink-0" />
+                  <p className="led-text text-[11px] font-bold text-white/80" style={{ letterSpacing: "0.04em" }}>
+                    Route the wallet's RPC/REST through the managed{" "}
+                    <span className="text-white led-glow-soft">rpc.gonka.gg</span>{" "}
+                    gateway.
+                  </p>
+                </div>
+                <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
+                  Activity history also switches to the ClickHouse-indexed
+                  endpoint — ~100x faster than the default explorer.
+                </p>
+                {gonkaKey && (
+                  <p className="led-spec text-[10px] pt-1">
+                    Active · {maskedKey(gonkaKey)}
+                  </p>
+                )}
+              </div>
+
+              <button
+                onClick={() =>
+                  chrome.tabs.create({ url: GONKA_RPC_SIGNUP_URL })
+                }
+                className="btn-secondary !py-2.5 text-sm flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                </svg>
+                Get API Key
+              </button>
+
+              <div className="space-y-2">
+                <p className="led-eyebrow">
+                  <span className="led-eyebrow-dot" />
+                  {gonkaKey ? "Replace key" : "Paste your key"}
+                </p>
+                <div className="relative">
+                  <input
+                    type={gonkaKeyVisible ? "text" : "password"}
+                    className="input-field text-xs py-2.5 pr-20"
+                    placeholder="gg_live_..."
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={gonkaKeyInput}
+                    onChange={(e) => {
+                      setGonkaKeyInput(e.target.value.trim());
+                      setGonkaKeyError("");
+                    }}
+                  />
+                  <button
+                    onClick={() => setGonkaKeyVisible((v) => !v)}
+                    className="led-text absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-[10px] font-extrabold text-white/55 hover:text-white transition-colors"
+                    type="button"
+                  >
+                    {gonkaKeyVisible ? "Hide" : "Show"}
+                  </button>
+                </div>
+                {gonkaKeyError && (
+                  <p className="led-text text-[10px] font-bold text-red-400">{gonkaKeyError}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2 shrink-0 pt-3 led-divider-top">
+              {gonkaKey && (
+                <button
+                  onClick={handleClearGonkaKey}
+                  disabled={gonkaKeySaving}
+                  className="led-text flex-1 py-2.5 text-[11px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-2xl transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={handleSaveGonkaKey}
+                disabled={gonkaKeySaving || !gonkaKeyInput}
+                className="btn-primary !py-2.5 text-sm flex-1 flex items-center justify-center gap-2"
+              >
+                {gonkaKeySaving ? (
+                  <>
+                    <Spinner size="sm" />
+                    Verifying...
+                  </>
+                ) : gonkaKey ? (
+                  "Replace"
+                ) : (
+                  "Save"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Address Book modal */}
       {addrBookModal && (
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
-          <div className="w-full bg-surface-900 border-t border-white/[0.06] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[90%] flex flex-col">
+          <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[90%] flex flex-col">
             <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-base font-bold">Address Book</h3>
+              <h3 className="led-title text-base">Address Book</h3>
               <button
                 onClick={() => {
                   setAddrBookModal(false);
@@ -777,31 +1019,41 @@ export default function Settings() {
             {/* Saved entries */}
             <div className="overflow-y-auto flex-1 space-y-1.5 -mx-1 px-1">
               {addressBook.length === 0 ? (
-                <div className="text-center py-6">
-                  <p className="text-sm text-surface-500">No saved addresses yet</p>
-                  <p className="text-xs text-surface-600 mt-1">Add addresses below to quickly fill the Send form</p>
+                <div className="text-center py-6 space-y-1">
+                  <p className="led-text text-[11px] font-extrabold text-white/55">
+                    No saved addresses yet
+                  </p>
+                  <p className="led-text text-[10px] font-medium text-white/30" style={{ letterSpacing: "0.04em" }}>
+                    Add addresses below to quickly fill the Send form
+                  </p>
                 </div>
               ) : (
                 addressBook.map((entry) => (
                   <div
                     key={entry.address}
-                    className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.02] border border-transparent"
+                    className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]"
                   >
-                    <div className="w-8 h-8 rounded-xl bg-gonka-500/10 flex items-center justify-center shrink-0">
-                      <span className="text-sm font-bold text-gonka-400">
+                    <div className="w-8 h-8 rounded-[3px] bg-white flex items-center justify-center shrink-0" style={{ boxShadow: "0 0 6px rgba(255,255,255,0.3)" }}>
+                      <span className="led-text text-[12px] font-extrabold text-surface-950">
                         {entry.name.charAt(0).toUpperCase()}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{entry.name}</p>
-                      <p className="text-[11px] font-mono text-surface-500 truncate">{entry.address}</p>
+                      <p className="led-text text-[12px] font-extrabold text-white truncate">
+                        {entry.name}
+                      </p>
+                      <p className="led-text text-[10px] font-medium text-white/45 truncate" style={{ letterSpacing: "0.04em" }}>
+                        {entry.address}
+                      </p>
                       {entry.note && (
-                        <p className="text-[11px] text-surface-600 truncate">{entry.note}</p>
+                        <p className="led-text text-[10px] font-medium text-white/30 truncate" style={{ letterSpacing: "0.04em" }}>
+                          {entry.note}
+                        </p>
                       )}
                     </div>
                     <button
                       onClick={() => handleRemoveEntry(entry.address)}
-                      className="shrink-0 px-2.5 py-1.5 text-[11px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors"
+                      className="led-text shrink-0 px-2.5 py-1.5 text-[10px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-md transition-colors"
                     >
                       Remove
                     </button>
@@ -811,8 +1063,11 @@ export default function Settings() {
             </div>
 
             {/* Add new entry */}
-            <div className="border-t border-white/[0.04] pt-4 space-y-2 shrink-0">
-              <p className="text-xs font-medium text-surface-400">Add address</p>
+            <div className="led-divider-top pt-4 space-y-2 shrink-0">
+              <p className="led-eyebrow">
+                <span className="led-eyebrow-dot" />
+                Add address
+              </p>
               <input
                 type="text"
                 className="input-field text-sm font-mono py-2.5"
@@ -853,9 +1108,9 @@ export default function Settings() {
       {/* Connected sites modal */}
       {sitesModal && (
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
-          <div className="w-full bg-surface-900 border-t border-white/[0.06] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[85%] flex flex-col">
+          <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[85%] flex flex-col">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold">Connected Sites</h3>
+              <h3 className="led-title text-base">Connected Sites</h3>
               <button
                 onClick={() => setSitesModal(false)}
                 className="p-1.5 hover:bg-white/5 rounded-xl transition-colors"
@@ -868,11 +1123,11 @@ export default function Settings() {
 
             {connectedSites.length === 0 ? (
               <div className="text-center py-8 space-y-2">
-                <svg className="w-10 h-10 text-surface-700 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <svg className="w-10 h-10 text-white/15 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m9.9-2.07a4.5 4.5 0 00-1.242-7.244l-4.5-4.5a4.5 4.5 0 00-6.364 6.364L4.876 8.07" />
                 </svg>
-                <p className="text-sm text-surface-500">No connected sites yet</p>
-                <p className="text-xs text-surface-600">
+                <p className="led-text text-[11px] font-extrabold text-white/55">No connected sites yet</p>
+                <p className="led-text text-[10px] font-medium text-white/30" style={{ letterSpacing: "0.04em" }}>
                   Sites that connect to your wallet will appear here
                 </p>
               </div>
@@ -889,25 +1144,27 @@ export default function Settings() {
                   return (
                     <div
                       key={site.origin}
-                      className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.02] border border-transparent"
+                      className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08]"
                     >
-                      <div className="w-8 h-8 rounded-xl bg-surface-800 flex items-center justify-center shrink-0">
-                        <span className="text-sm font-bold text-surface-400">
+                      <div className="w-8 h-8 rounded-[3px] bg-white/[0.08] flex items-center justify-center shrink-0 border border-white/[0.15]">
+                        <span className="led-text text-[12px] font-extrabold text-white/70">
                           {hostname.charAt(0).toUpperCase()}
                         </span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{hostname}</p>
-                        <p className="text-[11px] text-surface-600 truncate">
+                        <p className="led-text text-[12px] font-extrabold text-white truncate">
+                          {hostname}
+                        </p>
+                        <p className="led-text text-[10px] font-medium text-white/45 truncate" style={{ letterSpacing: "0.04em" }}>
                           {site.chainIds.join(", ")}
                         </p>
-                        <p className="text-[10px] text-surface-700">
+                        <p className="led-text text-[9px] font-medium text-white/30">
                           Connected {new Date(site.connectedAt).toLocaleDateString()}
                         </p>
                       </div>
                       <button
                         onClick={() => handleDisconnectSite(site.origin)}
-                        className="shrink-0 px-2.5 py-1.5 text-[11px] font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-xl transition-colors"
+                        className="led-text shrink-0 px-2.5 py-1.5 text-[10px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-md transition-colors"
                       >
                         Disconnect
                       </button>
@@ -927,7 +1184,7 @@ export default function Settings() {
                     loadConnectedSites();
                   }
                 }}
-                className="w-full py-2.5 text-xs text-red-400 hover:text-red-300 transition-colors font-medium"
+                className="led-text w-full py-2.5 text-[10px] font-extrabold text-red-400 hover:text-red-300 transition-colors"
               >
                 Disconnect All
               </button>
@@ -955,21 +1212,27 @@ function SettingsRow({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-3 w-full py-3.5 px-4 text-left hover:bg-white/[0.03] transition-all duration-200 active:scale-[0.99] ${
+      className={`group flex items-center gap-3 w-full py-3.5 px-4 text-left hover:bg-white/[0.04] transition-all duration-200 active:scale-[0.99] ${
         danger ? "text-red-400" : ""
       }`}
     >
-      <div className={`shrink-0 ${danger ? "text-red-400" : "text-surface-400"}`}>
+      <div className={`shrink-0 ${danger ? "text-red-400" : "text-white/55 group-hover:text-white transition-colors"}`}>
         {icon}
       </div>
       <div className="flex-1 min-w-0">
-        <p className={`text-sm font-medium ${danger ? "text-red-400" : ""}`}>
+        <p
+          className={`led-text text-[12px] font-extrabold leading-tight ${
+            danger ? "text-red-400" : "text-white"
+          }`}
+        >
           {label}
         </p>
-        <p className="text-xs text-surface-600">{description}</p>
+        <p className="led-text text-[10px] font-medium text-white/45 mt-0.5 truncate" style={{ letterSpacing: "0.04em" }}>
+          {description}
+        </p>
       </div>
       <svg
-        className="w-4 h-4 text-surface-700 shrink-0"
+        className="w-4 h-4 text-white/30 shrink-0 group-hover:text-white/60 transition-colors"
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"

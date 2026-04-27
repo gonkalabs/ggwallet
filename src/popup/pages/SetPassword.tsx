@@ -46,22 +46,24 @@ export default function SetPassword() {
   };
 
   return (
-    <div className="flex flex-col h-[600px] bg-surface-950">
-      <header className="flex items-center gap-3 px-4 h-14 shrink-0">
+    <div className="flex flex-col h-[600px]">
+      <header className="flex items-center gap-3 px-4 h-14 shrink-0 led-divider-bottom">
         <button
           onClick={() => navigate(-1)}
           className="p-1.5 -ml-1.5 hover:bg-white/5 rounded-xl transition-colors"
         >
-          <svg className="w-5 h-5 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-5 h-5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
         </button>
-        <h1 className="text-base font-semibold">Set Password</h1>
+        <h1 className="led-text text-[13px] font-extrabold text-white led-glow-soft">
+          Set Password
+        </h1>
       </header>
 
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-4">
-          <p className="text-xs text-surface-500 mb-2">
+          <p className="led-text text-[11px] font-medium text-white/55 mb-2" style={{ letterSpacing: "0.05em" }}>
             Create a password to encrypt your wallet. You'll need this password
             to unlock GG Wallet each time you use it.
           </p>
@@ -87,7 +89,7 @@ export default function SetPassword() {
             }}
           />
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="led-text text-[10px] font-bold text-red-400">{error}</p>}
 
           {/* Password strength */}
           <div className="space-y-1.5">
@@ -95,31 +97,36 @@ export default function SetPassword() {
               {[1, 2, 3, 4].map((level) => (
                 <div
                   key={level}
-                  className={`h-1 flex-1 rounded-full transition-colors ${
+                  className={`h-1 flex-1 transition-colors ${
                     password.length >= level * 4
                       ? level <= 1
                         ? "bg-red-500"
                         : level <= 2
                         ? "bg-yellow-500"
-                        : "bg-gonka-400"
+                        : "bg-white"
                       : "bg-white/[0.06]"
                   }`}
+                  style={
+                    password.length >= level * 4 && level > 2
+                      ? { boxShadow: "0 0 6px rgba(255,255,255,0.5)" }
+                      : undefined
+                  }
                 />
               ))}
             </div>
-            <p className="text-[10px] text-surface-600">
+            <p className="led-text text-[10px] font-bold text-white/40">
               {password.length === 0
                 ? ""
                 : password.length < 8
-                ? "Too short"
+                ? "▢ Too short"
                 : password.length < 12
-                ? "Good"
-                : "Strong"}
+                ? "▢ Good"
+                : "▢ Strong"}
             </p>
           </div>
         </div>
 
-        <div className="px-4 py-3 shrink-0">
+        <div className="px-4 py-3 shrink-0 led-divider-top">
           <button
             type="submit"
             disabled={loading || !password || !confirm}
@@ -131,7 +138,7 @@ export default function SetPassword() {
                 Creating wallet...
               </>
             ) : (
-              "Create Wallet"
+              "▶ Create Wallet"
             )}
           </button>
         </div>

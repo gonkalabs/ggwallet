@@ -70,15 +70,22 @@ export default function TxItem({ tx, symbolMap }: TxItemProps) {
     >
       {/* Direction icon */}
       <div
-        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+        className={`w-9 h-9 rounded-[3px] flex items-center justify-center shrink-0 border ${
           !transfer
-            ? "bg-purple-500/10 text-purple-400"
+            ? "bg-purple-500/10 text-purple-300 border-purple-500/30"
             : isSelf
-            ? "bg-white/[0.06] text-surface-400"
+            ? "bg-white/[0.06] text-white/55 border-white/15"
             : isSent
-            ? "bg-red-500/10 text-red-400"
-            : "bg-gonka-500/10 text-gonka-400"
+            ? "bg-red-500/10 text-red-300 border-red-500/30"
+            : "bg-white/[0.06] text-white border-white/25"
         }`}
+        style={
+          !transfer || isSelf
+            ? undefined
+            : isSent
+            ? undefined
+            : { boxShadow: "0 0 6px rgba(255,255,255,0.15)" }
+        }
       >
         {!transfer ? (
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -102,40 +109,42 @@ export default function TxItem({ tx, symbolMap }: TxItemProps) {
 
       {/* Details */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className="text-sm font-medium">{label}</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="led-text text-[12px] font-extrabold text-white truncate">
+              {label}
+            </span>
             {tx.isIbc && (
-              <span className="text-[10px] font-medium text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full">
+              <span className="led-text text-[9px] font-extrabold text-blue-300 border border-blue-400/40 px-1.5 py-0.5 rounded-[3px]">
                 IBC
               </span>
             )}
-            <svg className="w-3 h-3 text-surface-600 opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="w-3 h-3 text-white/30 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
             </svg>
           </div>
           {transfer && !isZeroAmount ? (
             <span
-              className={`text-sm font-semibold tabular-nums ${
-                isSent ? "text-red-400" : "text-gonka-400"
+              className={`led-text text-[12px] font-extrabold tabular-nums shrink-0 ${
+                isSent ? "text-red-300" : "text-white led-glow-soft"
               }`}
             >
               {isSent ? "-" : "+"}
               {displayAmount}
-              <span className="ml-1 text-xs font-medium opacity-70">{symbol}</span>
+              <span className="ml-1 text-[10px] font-bold opacity-60">{symbol}</span>
             </span>
           ) : !isZeroAmount ? (
-            <span className="text-sm font-semibold tabular-nums text-surface-300">
+            <span className="led-text text-[12px] font-extrabold tabular-nums text-white/80 shrink-0">
               {displayAmount}
-              <span className="ml-1 text-xs font-medium opacity-70">{symbol}</span>
+              <span className="ml-1 text-[10px] font-bold opacity-60">{symbol}</span>
             </span>
           ) : null}
         </div>
-        <div className="flex items-center justify-between mt-0.5">
-          <span className="text-xs text-surface-500 font-mono truncate max-w-[160px]">
+        <div className="flex items-center justify-between mt-0.5 gap-2">
+          <span className="led-text text-[10px] font-medium text-white/40 truncate max-w-[160px]" style={{ letterSpacing: "0.04em" }}>
             {peerAddress ? truncateAddress(peerAddress) : "\u2014"}
           </span>
-          <span className="text-xs text-surface-600">
+          <span className="led-text text-[10px] font-bold text-white/30 shrink-0">
             {tx.timestamp ? formatTimestamp(tx.timestamp) : `#${tx.height}`}
           </span>
         </div>

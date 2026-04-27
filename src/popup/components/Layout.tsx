@@ -28,45 +28,58 @@ export default function Layout({
   const showHeader = title || showBack || headerContent;
 
   return (
-    <div className="flex flex-col h-[600px] bg-surface-950">
-      {/* Header */}
+    <div className="flex flex-col h-[600px]">
       {showHeader && (
-        <header className="flex items-center gap-3 px-4 h-14 shrink-0">
+        <header className="flex items-center gap-3 px-4 h-14 shrink-0 led-divider-bottom">
           {showBack && (
             <button
               onClick={() => navigate(-1)}
               className="p-1.5 -ml-1.5 hover:bg-white/5 rounded-xl transition-colors"
             >
-              <svg className="w-5 h-5 text-surface-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-white/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
           )}
-          {title && <h1 className="text-base font-semibold">{title}</h1>}
+          {title && (
+            <h1 className="led-text text-[13px] font-extrabold text-white led-glow-soft">
+              {title}
+            </h1>
+          )}
           {headerContent}
         </header>
       )}
 
-      {/* Content */}
       <main className="flex-1 overflow-y-auto">{children}</main>
 
-      {/* Bottom nav */}
       {showNav && (
-        <nav className="flex items-center justify-around px-2 h-14 shrink-0 bg-surface-950 border-t border-white/[0.04]">
+        <nav className="grid grid-cols-3 px-1 py-1 h-14 shrink-0 led-divider-top bg-led-bg/80 backdrop-blur-sm">
           {navItems.map((item) => {
             const active = location.pathname === item.path;
             return (
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-all duration-200 ${
+                className={`relative flex flex-col items-center justify-center gap-0.5 mx-1 my-0.5 rounded-xl transition-all duration-200 ${
                   active
-                    ? "text-gonka-400"
-                    : "text-surface-500 hover:text-surface-300 active:scale-95"
+                    ? "bg-white/[0.06] text-white"
+                    : "text-white/40 hover:text-white/70 active:scale-95"
                 }`}
               >
+                {active && (
+                  <span
+                    className="absolute top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-[1px] bg-white"
+                    style={{ boxShadow: "0 0 6px #fff, 0 0 12px rgba(255,255,255,0.5)" }}
+                  />
+                )}
                 <item.icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <span
+                  className={`led-text text-[9px] font-bold ${
+                    active ? "led-glow-soft" : ""
+                  }`}
+                >
+                  {item.label}
+                </span>
               </button>
             );
           })}
@@ -75,8 +88,6 @@ export default function Layout({
     </div>
   );
 }
-
-// ---- Icons ----
 
 function HomeIcon({ className }: { className?: string }) {
   return (

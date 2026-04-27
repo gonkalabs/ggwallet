@@ -167,12 +167,12 @@ export default function Dashboard() {
 
         {/* Quick actions */}
         {isViewOnly && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 animate-fade-in-up">
+          <div className="led-panel led-text flex items-center gap-2 px-3 py-2 text-[10px] font-bold text-amber-300 animate-fade-in-up" style={{ borderColor: "rgba(251, 191, 36, 0.25)" }}>
             <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.641 0-8.58-3.007-9.964-7.178z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            Watch-only — cannot sign transactions
+            Watch-only · cannot sign transactions
           </div>
         )}
         <div className="grid grid-cols-4 gap-2 animate-fade-in-up" style={{ animationDelay: "0.05s", animationFillMode: "backwards" }}>
@@ -220,15 +220,16 @@ export default function Dashboard() {
         <div className="animate-fade-in-up" style={{ animationDelay: "0.1s", animationFillMode: "backwards" }}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-surface-300">
+              <h2 className="led-eyebrow">
+                <span className="led-eyebrow-dot" />
                 Recent Activity
               </h2>
               {refreshingTxs && hasCachedTxs ? (
-                <Spinner size="sm" className="!w-3 !h-3 !text-surface-600" />
+                <Spinner size="sm" className="!w-3 !h-3 !text-white/40" />
               ) : hasCachedTxs ? (
                 <button
                   onClick={forceRefreshTxs}
-                  className="p-0.5 text-surface-600 hover:text-gonka-400 transition-colors rounded-lg hover:bg-white/[0.04] active:scale-90"
+                  className="p-0.5 text-white/40 hover:text-white transition-colors rounded-md hover:bg-white/[0.06] active:scale-90"
                   title="Refresh transactions"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -239,9 +240,9 @@ export default function Dashboard() {
             </div>
             <button
               onClick={() => navigate("/transactions")}
-              className="text-xs text-gonka-400 hover:text-gonka-300 transition-colors"
+              className="led-text text-[10px] font-bold text-white/55 hover:text-white transition-colors"
             >
-              View all
+              View all →
             </button>
           </div>
 
@@ -251,7 +252,7 @@ export default function Dashboard() {
                 <Spinner size="md" />
               </div>
             ) : txs.length === 0 ? (
-              <div className="text-center py-8 text-surface-600 text-sm">
+              <div className="led-text text-center py-8 text-white/35 text-[11px] font-medium">
                 No transactions yet
               </div>
             ) : (
@@ -283,10 +284,12 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="flex flex-col items-center gap-1.5 py-3.5 bg-white/[0.03] hover:bg-gonka-500/[0.08] border border-transparent hover:border-gonka-500/[0.15] rounded-2xl transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/[0.03] disabled:hover:border-transparent"
+      className="led-panel group flex flex-col items-center gap-1.5 py-3.5 transition-all duration-200 active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed hover:!border-white/30"
     >
-      <div className="text-gonka-400">{icon}</div>
-      <span className="text-xs font-medium text-surface-300">{label}</span>
+      <div className="text-white/80 group-hover:text-white transition-colors">{icon}</div>
+      <span className="led-text text-[10px] font-bold text-white/65 group-hover:text-white transition-colors">
+        {label}
+      </span>
     </button>
   );
 }

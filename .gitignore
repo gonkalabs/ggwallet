@@ -24,3 +24,8 @@ Thumbs.db
 
 # Logs
 npm-debug.log*
+
+# mobile
+ggwallet-mobile/
+
+*.zip

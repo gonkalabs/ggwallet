@@ -39,14 +39,16 @@ export default function WalletSwitcher() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] transition-all duration-150 max-w-[200px]"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-all duration-150 max-w-[200px]"
       >
-        <div className="w-5 h-5 rounded-full bg-gradient-to-br from-gonka-400 to-gonka-600 flex items-center justify-center text-[10px] font-bold text-surface-950 shrink-0">
+        <div className="w-5 h-5 rounded-[3px] bg-white flex items-center justify-center text-[10px] font-extrabold text-surface-950 shrink-0 led-text" style={{ boxShadow: "0 0 6px rgba(255,255,255,0.4)" }}>
           {activeWallet.name.charAt(0).toUpperCase()}
         </div>
-        <span className="text-xs font-medium truncate">{activeWallet.name}</span>
+        <span className="led-text text-[11px] font-bold text-white truncate">
+          {activeWallet.name}
+        </span>
         <svg
-          className={`w-3 h-3 text-surface-500 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`w-3 h-3 text-white/40 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -57,55 +59,60 @@ export default function WalletSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1.5 w-64 bg-surface-900 border border-white/[0.06] rounded-2xl shadow-card z-50 overflow-hidden animate-scale-in origin-top-left">
-          <div className="max-h-[240px] overflow-y-auto py-1">
-            {wallets.map((w, i) => (
-              <button
-                key={i}
-                onClick={() => handleSwitch(i)}
-                className={`flex items-center gap-2.5 w-full px-3 py-2.5 text-left transition-colors ${
-                  i === activeIndex
-                    ? "bg-gonka-500/10"
-                    : "hover:bg-white/[0.04]"
-                }`}
-              >
-                <div
-                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+        <div className="absolute top-full left-0 mt-1.5 w-64 led-bezel z-50 animate-scale-in origin-top-left">
+          <div className="led-display">
+            <div className="max-h-[240px] overflow-y-auto py-1">
+              {wallets.map((w, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSwitch(i)}
+                  className={`flex items-center gap-2.5 w-full px-3 py-2.5 text-left transition-colors ${
                     i === activeIndex
-                      ? "bg-gradient-to-br from-gonka-400 to-gonka-600 text-surface-950"
-                      : "bg-white/[0.06] text-surface-400"
+                      ? "bg-white/[0.06]"
+                      : "hover:bg-white/[0.04]"
                   }`}
                 >
-                  {w.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{w.name}</p>
-                  <p className="text-[10px] font-mono text-surface-500 truncate">
-                    {truncateAddress(w.address, 10, 6)}
-                  </p>
-                </div>
-                {i === activeIndex && (
-                  <svg className="w-4 h-4 text-gonka-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            ))}
-          </div>
+                  <div
+                    className={`w-7 h-7 rounded-[3px] flex items-center justify-center text-xs font-extrabold shrink-0 led-text ${
+                      i === activeIndex
+                        ? "bg-white text-surface-950"
+                        : "bg-white/[0.08] text-white/70"
+                    }`}
+                    style={i === activeIndex ? { boxShadow: "0 0 8px rgba(255,255,255,0.4)" } : undefined}
+                  >
+                    {w.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="led-text text-[12px] font-bold text-white truncate">
+                      {w.name}
+                    </p>
+                    <p className="led-text text-[9px] font-medium text-white/40 truncate">
+                      {truncateAddress(w.address, 10, 6)}
+                    </p>
+                  </div>
+                  {i === activeIndex && (
+                    <svg className="w-4 h-4 text-white shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+            </div>
 
-          <div className="border-t border-white/[0.04] p-1">
-            <button
-              onClick={() => {
-                setOpen(false);
-                navigate("/add-wallet");
-              }}
-              className="flex items-center gap-2 w-full px-3 py-2.5 text-left rounded-xl hover:bg-white/[0.04] transition-colors text-gonka-400"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              <span className="text-sm font-medium">Add Wallet</span>
-            </button>
+            <div className="led-divider-top p-1">
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  navigate("/add-wallet");
+                }}
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-left rounded-xl hover:bg-white/[0.04] transition-colors text-white"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                <span className="led-text text-[11px] font-bold">Add Wallet</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

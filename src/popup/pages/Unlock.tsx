@@ -68,30 +68,37 @@ export default function Unlock() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-between h-[600px] px-6 py-10 bg-surface-950">
+    <div className="flex flex-col items-center justify-between h-[600px] px-6 py-10">
       <div />
 
       <div className="w-full flex flex-col items-center animate-fade-in-up">
-        <img src={logo} alt="GG Wallet" className="w-16 h-16 mb-5 rounded-2xl shadow-glow" />
-        <h1 className="text-xl font-bold tracking-tight mb-1">Welcome back</h1>
+        <img
+          src={logo}
+          alt="GG Wallet"
+          className="w-16 h-16 mb-5 rounded-2xl"
+          style={{ boxShadow: "0 0 20px -4px rgba(255,255,255,0.4)" }}
+        />
+        <h1 className="led-title text-2xl mb-2">Welcome back</h1>
 
         {originHostname && methodLabel ? (
-          <div className="mb-8 text-center space-y-2">
-            <div className="inline-flex items-center gap-2 bg-surface-800 border border-white/[0.06] rounded-2xl px-3 py-1.5">
-              <div className="w-4 h-4 rounded-full bg-gonka-500/20 border border-gonka-500/30 flex items-center justify-center shrink-0">
-                <span className="text-[9px] font-bold text-gonka-400">
+          <div className="mb-8 text-center space-y-2.5">
+            <div className="inline-flex items-center gap-2 led-panel px-3 py-1.5">
+              <div className="w-4 h-4 rounded-[2px] bg-white flex items-center justify-center shrink-0" style={{ boxShadow: "0 0 4px rgba(255,255,255,0.4)" }}>
+                <span className="led-text text-[9px] font-extrabold text-surface-950">
                   {originHostname.charAt(0).toUpperCase()}
                 </span>
               </div>
-              <span className="text-xs font-medium text-surface-300">{originHostname}</span>
+              <span className="led-text text-[11px] font-extrabold text-white">{originHostname}</span>
             </div>
-            <p className="text-sm text-surface-400">
-              wants to <span className="text-white font-medium">{methodLabel}</span>
+            <p className="led-text text-[12px] font-bold text-white/70">
+              wants to <span className="text-white led-glow-soft">{methodLabel}</span>
             </p>
-            <p className="text-xs text-surface-600">Unlock your wallet to continue</p>
+            <p className="led-text text-[10px] font-medium text-white/35" style={{ letterSpacing: "0.05em" }}>
+              Unlock your wallet to continue
+            </p>
           </div>
         ) : (
-          <p className="text-sm text-surface-500 mb-8">
+          <p className="led-text text-[11px] font-bold text-white/55 mb-8" style={{ letterSpacing: "0.05em" }}>
             Enter your password to unlock GG Wallet
           </p>
         )}
@@ -108,7 +115,7 @@ export default function Unlock() {
           />
 
           {error && (
-            <p className="text-xs text-red-400 text-center">{error}</p>
+            <p className="led-text text-[10px] font-bold text-red-400 text-center">{error}</p>
           )}
 
           <button
@@ -122,7 +129,7 @@ export default function Unlock() {
                 Unlocking...
               </>
             ) : (
-              "Unlock"
+              "▶ Unlock"
             )}
           </button>
 
@@ -130,7 +137,7 @@ export default function Unlock() {
             <button
               type="button"
               onClick={handleReject}
-              className="w-full py-2.5 text-sm font-medium text-surface-400 hover:text-red-400 transition-colors rounded-xl hover:bg-white/[0.04]"
+              className="led-text w-full py-2.5 text-[11px] font-extrabold text-white/45 hover:text-red-400 transition-colors rounded-xl hover:bg-white/[0.04]"
             >
               Reject request
             </button>
@@ -138,13 +145,13 @@ export default function Unlock() {
         </form>
       </div>
 
-      <p className="text-xs text-surface-600">
+      <p className="led-text text-[10px] font-bold text-white/30">
         open-source by{" "}
         <a
           href="https://gonkalabs.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-surface-500 hover:text-surface-400 transition-colors"
+          className="text-white/55 hover:text-white transition-colors"
         >
           gonkalabs
         </a>

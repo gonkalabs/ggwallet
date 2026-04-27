@@ -17,6 +17,8 @@ const KEYS = {
   ADDRESS_BOOK: "gg_address_book",
   /** Suggested chains from dApps: Record<chainId, ChainInfo> */
   SUGGESTED_CHAINS: "gg_suggested_chains",
+  /** rpc.gonka.gg API key (string). When set, overrides the active RPC endpoint. */
+  GONKA_RPC_API_KEY: "gg_rpc_gonka_gg_api_key",
 
   // --- Legacy single-wallet keys (migration) ---
   ENCRYPTED_MNEMONIC: "gg_encrypted_mnemonic",

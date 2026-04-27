@@ -10,11 +10,20 @@
   }
 
   html, body {
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    /* LED/CRT terminal aesthetic: monospace everywhere by default. */
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #000000;
+    background-color: #060810;
     color: #fff;
+  }
+
+  /* Body-wide LED dot grid + slow CRT vignette so every screen reads as
+     a single continuous "display surface" inside the popup. */
+  body {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.045) 0.9px, transparent 1px);
+    background-size: 5px 5px;
+    background-position: 0 0;
   }
 
   ::-webkit-scrollbar {
@@ -36,37 +45,192 @@
 }
 
 @layer components {
+  /* ============================================================
+     LED / CRT TERMINAL PRIMITIVES
+     ============================================================ */
+
+  /* Outer "bezel" (TV casing). Wrap a .led-display in this for hero
+     elements (BalanceCard, modals). For inline cards, .led-panel below
+     skips the bezel and just gives you the inset display surface. */
+  .led-bezel {
+    position: relative;
+    padding: 6px;
+    background: linear-gradient(180deg, #1a1d24 0%, #0e1015 100%);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 18px;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 12px 30px -12px rgba(0, 0, 0, 0.6);
+  }
+
+  /* Inner LED display surface — dark with dot grid + corner vignette.
+     Pair with .led-bezel for the full bezel-and-screen look, or use
+     standalone for compact panels. */
+  .led-display {
+    position: relative;
+    background-color: #060810;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.045) 0.9px, transparent 1px);
+    background-size: 5px 5px;
+    border-radius: 12px;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .led-display::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .led-display > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  /* Lighter inset panel — used for stacked cards inside scrollable pages
+     where a full bezel would be too heavy. */
+  .led-panel {
+    position: relative;
+    background-color: #0a0d16;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 0.9px, transparent 1px);
+    background-size: 5px 5px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  /* ----- Typography ----- */
+
+  .led-text {
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .led-eyebrow {
+    @apply led-text inline-flex items-center gap-2 text-[11px] font-bold;
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.15);
+  }
+
+  .led-eyebrow-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: #ffffff;
+    box-shadow: 0 0 6px #ffffff, 0 0 12px rgba(255, 255, 255, 0.5);
+  }
+
+  .led-title {
+    @apply led-text font-extrabold leading-[1.05];
+    color: #ffffff;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.35), 0 0 18px rgba(255, 255, 255, 0.15);
+  }
+
+  .led-description {
+    @apply led-text font-medium;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.72);
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.1);
+  }
+
+  /* "▢ LABEL" pill marker — used for spec lines, chip-like badges. */
+  .led-spec {
+    @apply led-text inline-flex items-center gap-1.5 text-[11px] font-bold;
+    color: rgba(255, 255, 255, 0.55);
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.1);
+  }
+  .led-spec::before {
+    content: "▢";
+    font-size: 9px;
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .led-cta {
+    @apply led-text inline-flex items-center gap-2.5 font-extrabold text-sm;
+    color: #ffffff;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.4), 0 0 14px rgba(255, 255, 255, 0.5);
+  }
+
+  /* Dashed CRT-style divider (vertical separator between rows). */
+  .led-divider-top {
+    border-top: 1px dashed rgba(255, 255, 255, 0.15);
+  }
+  .led-divider-bottom {
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+  }
+
+  /* Glow utilities for arbitrary text. */
+  .led-glow {
+    text-shadow: 0 0 6px rgba(255, 255, 255, 0.55), 0 0 14px rgba(255, 255, 255, 0.25);
+  }
+  .led-glow-soft {
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.2);
+  }
+
+  /* ============================================================
+     RE-SKINNED EXISTING COMPONENTS
+     (every page picks up the LED look automatically)
+     ============================================================ */
+
   .btn-primary {
-    @apply w-full py-3.5 px-5 bg-gonka-500 hover:bg-gonka-400 active:bg-gonka-600
-           text-white font-semibold rounded-2xl transition-all duration-200
-           disabled:opacity-40 disabled:cursor-not-allowed
-           shadow-glow-sm hover:shadow-glow
-           active:scale-[0.98];
+    @apply w-full py-3.5 px-5 bg-white text-surface-950 font-extrabold rounded-2xl
+           transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
+           active:scale-[0.98] hover:bg-white/90;
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    box-shadow: 0 0 24px -6px rgba(255, 255, 255, 0.4);
   }
 
   .btn-secondary {
-    @apply w-full py-3.5 px-5 bg-surface-800 hover:bg-surface-700 active:bg-surface-600
-           text-white font-medium rounded-2xl transition-all duration-200
-           disabled:opacity-40 disabled:cursor-not-allowed
+    @apply w-full py-3.5 px-5 text-white font-bold rounded-2xl
+           transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
            active:scale-[0.98];
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    background: linear-gradient(180deg, #1a1d24 0%, #0e1015 100%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.22);
   }
 
   .btn-ghost {
-    @apply w-full py-3.5 px-5 bg-transparent hover:bg-white/5 active:bg-white/[0.08]
-           text-white font-medium rounded-2xl transition-all duration-200
-           disabled:opacity-40 disabled:cursor-not-allowed
+    @apply w-full py-3.5 px-5 bg-transparent text-white font-bold rounded-2xl
+           transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed
            active:scale-[0.98];
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    border: 1px dashed rgba(255, 255, 255, 0.18);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.32);
   }
 
   .input-field {
-    @apply w-full py-3.5 px-4 bg-surface-800/80 border border-white/[0.06]
-           rounded-2xl text-white placeholder-surface-500
-           focus:outline-none focus:border-gonka-500/50 focus:ring-1 focus:ring-gonka-500/30
-           transition-all duration-200;
+    @apply w-full py-3.5 px-4 rounded-2xl text-white placeholder:text-white/30
+           focus:outline-none transition-all duration-200;
+    font-family: "JetBrains Mono", "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    background-color: #0a0d16;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.035) 0.9px, transparent 1px);
+    background-size: 5px 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    letter-spacing: 0.04em;
+  }
+  .input-field:focus {
+    border-color: rgba(255, 255, 255, 0.4);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
   }
 
+  /* In-screen card — uses the led-panel inset look. Keeps existing
+     `.card` API so all pages render correctly without edits. */
   .card {
-    @apply bg-surface-900/80 backdrop-blur-sm rounded-2xl p-4
-           border border-white/[0.04] transition-all duration-200;
+    @apply led-panel p-4 transition-all duration-200;
   }
 }

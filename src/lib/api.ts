@@ -1,19 +1,18 @@
 import { GONKA_EXPLORER_URL, GONKA_EXPLORER_API_KEY } from "./gonka";
+import { GONKA_RPC_BASE_URL, getGonkaRpcApiKey } from "./rpc";
 
 /**
- * Gonka.gg Explorer API client.
+ * Transaction history API.
  *
- * Response shape from /api/public/wallets/{address}/transactions:
- * {
- *   address, direction, source, page, limit, has_more, total_fetched,
- *   items: [{
- *     hash, block_height, timestamp, sender, receiver,
- *     amount ("10000000 ngonka"), fee, gas_used, gas_wanted,
- *     status ("success"), tx_type ("received"), message_type ("MsgSend"),
- *     memo, direction ("in"|"out"), is_ibc, token_symbol ("GNK"),
- *     message_sender, ...
- *   }]
- * }
+ * Two backends, chosen at runtime based on whether a rpc.gonka.gg API
+ * key is configured:
+ *
+ *   - rpc.gonka.gg ClickHouse index (`/api/ch/address/{addr}`) when the
+ *     key is set — ~100x faster than the explorer.
+ *   - gonka.gg explorer (`/api/public/wallets/{addr}/transactions`)
+ *     otherwise.
+ *
+ * Both are normalized to the same Transaction shape below.
  */
 
 export interface Transaction {
@@ -46,13 +45,28 @@ export interface TransactionsResponse {
 }
 
 /**
- * Fetch transactions for a wallet address from gonka.gg explorer.
+ * Fetch transactions for a wallet address. Automatically routes to the
+ * rpc.gonka.gg ClickHouse index when the API key is configured, otherwise
+ * falls back to the gonka.gg explorer.
  */
 export async function fetchTransactions(
   address: string,
   page = 1,
   pageSize = 20,
   direction: "all" | "sent" | "received" = "all"
+): Promise<TransactionsResponse> {
+  const gonkaKey = await getGonkaRpcApiKey();
+  if (gonkaKey) {
+    return fetchTransactionsViaGonkaRpc(address, gonkaKey, page, pageSize, direction);
+  }
+  return fetchTransactionsViaExplorer(address, page, pageSize, direction);
+}
+
+async function fetchTransactionsViaExplorer(
+  address: string,
+  page: number,
+  pageSize: number,
+  direction: "all" | "sent" | "received"
 ): Promise<TransactionsResponse> {
   const url = new URL(
     `/api/public/wallets/${address}/transactions`,
@@ -84,6 +98,133 @@ export async function fetchTransactions(
     pageSize: data.limit || pageSize,
     hasMore: data.has_more === true,
   };
+}
+
+/**
+ * Fetch tx history from rpc.gonka.gg's ClickHouse index.
+ *
+ * The /api/ch/address endpoint doesn't support server-side direction
+ * filtering, so we fetch unfiltered and apply the filter client-side.
+ */
+async function fetchTransactionsViaGonkaRpc(
+  address: string,
+  apiKey: string,
+  page: number,
+  pageSize: number,
+  direction: "all" | "sent" | "received"
+): Promise<TransactionsResponse> {
+  const offset = Math.max(0, (page - 1) * pageSize);
+  const url =
+    `${GONKA_RPC_BASE_URL}/key/${encodeURIComponent(apiKey)}` +
+    `/api/ch/address/${address}?limit=${pageSize}&offset=${offset}`;
+
+  const resp = await fetch(url);
+
+  if (!resp.ok) {
+    throw new Error(`rpc.gonka.gg error: ${resp.status} ${resp.statusText}`);
+  }
+
+  const data = await resp.json();
+  const rawTxs: any[] = Array.isArray(data.txs) ? data.txs : [];
+
+  let transactions = rawTxs.map((tx) => normalizeChTx(tx, address));
+  if (direction !== "all") {
+    transactions = transactions.filter((t) => t.direction === direction);
+  }
+
+  return {
+    transactions,
+    total: typeof data.count === "number" ? data.count : transactions.length,
+    page,
+    pageSize,
+    hasMore: data.has_more === true,
+  };
+}
+
+/**
+ * Extract the first Cosmos `/x.y.MsgFoo` action from the ch events blob
+ * and return the trailing `MsgFoo` segment. Returns "" when unparseable.
+ */
+function extractMessageType(eventsStr: unknown): string {
+  if (typeof eventsStr !== "string" || !eventsStr) return "";
+  try {
+    const events = JSON.parse(eventsStr);
+    if (!Array.isArray(events)) return "";
+    for (const ev of events) {
+      if (ev?.type !== "message") continue;
+      for (const attr of ev.attributes || []) {
+        if (attr?.key === "action" && typeof attr.value === "string") {
+          const parts = attr.value.split(".");
+          return parts[parts.length - 1] || "";
+        }
+      }
+    }
+  } catch {
+    // malformed JSON — fall through
+  }
+  return "";
+}
+
+/** Split "9ngonka" or "10000000 ngonka" into amount + denom. */
+function splitAmountDenom(raw: string): { amount: string; denom: string } {
+  if (!raw) return { amount: "0", denom: "ngonka" };
+  const spaceIdx = raw.indexOf(" ");
+  if (spaceIdx > 0) {
+    return { amount: raw.slice(0, spaceIdx), denom: raw.slice(spaceIdx + 1) };
+  }
+  const m = raw.match(/^(\d+)(.*)$/);
+  if (m) {
+    return { amount: m[1] || "0", denom: (m[2] || "ngonka").trim() || "ngonka" };
+  }
+  return { amount: "0", denom: raw };
+}
+
+function normalizeChTx(tx: any, walletAddress: string): Transaction {
+  const sender: string = tx.sender || "";
+  const receiver: string = tx.recipient || "";
+  const { amount, denom } = splitAmountDenom(String(tx.amount ?? ""));
+  const messageType = extractMessageType(tx.events);
+
+  let direction: "sent" | "received" | "self" = "received";
+  if (sender === walletAddress && receiver === walletAddress) {
+    direction = "self";
+  } else if (sender === walletAddress) {
+    direction = "sent";
+  } else if (receiver === walletAddress) {
+    direction = "received";
+  } else if (sender && !receiver) {
+    direction = "sent";
+  }
+
+  return {
+    hash: String(tx.tx_hash || ""),
+    height: String(tx.block_height || ""),
+    // "2026-04-27 19:35:53.000" → ISO so formatTimestamp parses cleanly.
+    timestamp: toIsoTimestamp(tx.block_time),
+    sender,
+    receiver,
+    amount,
+    amountRaw: String(tx.amount ?? ""),
+    denom,
+    direction,
+    txType: String(tx.tx_type || ""),
+    messageType,
+    status: tx.success === false ? "failed" : "success",
+    fee: tx.fee ? String(tx.fee) : null,
+    gasUsed: Number(tx.gas_used || 0),
+    gasWanted: Number(tx.gas_wanted || 0),
+    memo: String(tx.memo || ""),
+    tokenSymbol: denom.startsWith("ibc/") ? `IBC-${denom.slice(4, 8)}` : "GNK",
+    isIbc: denom.startsWith("ibc/"),
+  };
+}
+
+function toIsoTimestamp(raw: unknown): string {
+  if (typeof raw !== "string" || !raw) return "";
+  // Accept "YYYY-MM-DD HH:MM:SS.sss" (UTC) and normalize to ISO.
+  const iso = raw.includes("T") ? raw : raw.replace(" ", "T") + "Z";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
 function normalizeItem(item: any, walletAddress: string): Transaction {

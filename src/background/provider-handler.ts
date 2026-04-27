@@ -293,6 +293,24 @@ async function derivePrivateKeyBytes(mnemonic: string, chainId: string): Promise
 }
 
 // ------------------------------------------------------------------
+//  Origin allow-list
+//
+//  GG Wallet only ever talks to HTTPS dApps. Plain HTTP (including
+//  http://localhost), file://, and any other scheme is rejected up-front
+//  so a malicious local server, a mixed-content downgrade, or a sniffable
+//  Wi-Fi hop can never coerce the wallet into signing.
+// ------------------------------------------------------------------
+
+export function isAllowedDappOrigin(origin: string | undefined | null): boolean {
+  if (!origin) return false;
+  try {
+    return new URL(origin).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+// ------------------------------------------------------------------
 //  Main router
 // ------------------------------------------------------------------
 
@@ -301,6 +319,12 @@ export async function handleProviderRequest(
   params: any,
   origin?: string,
 ): Promise<{ result?: any; error?: string }> {
+  if (!isAllowedDappOrigin(origin)) {
+    return {
+      error: `GG Wallet only connects to HTTPS sites. Origin "${origin || "(unknown)"}" was blocked.`,
+    };
+  }
+
   try {
     switch (method) {
       // --- Methods that need approval ---

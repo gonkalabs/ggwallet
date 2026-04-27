@@ -115,7 +115,7 @@ export default function Transactions() {
     <Layout title="Activity">
       <div className="px-4 py-3 space-y-3">
         {/* Filters */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           {filters.map(({ key, label }) => (
             <button
               key={key}
@@ -123,21 +123,26 @@ export default function Transactions() {
                 setFilter(key);
                 setPage(1);
               }}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${
+              className={`led-text px-3.5 py-1.5 text-[10px] font-extrabold rounded-md border transition-all duration-200 ${
                 filter === key
-                  ? "bg-gonka-500/15 text-gonka-400 border border-gonka-500/25"
-                  : "bg-white/[0.04] text-surface-400 hover:bg-white/[0.06] border border-transparent"
+                  ? "bg-white text-surface-950 border-white"
+                  : "bg-transparent text-white/55 border-white/15 hover:border-white/35 hover:text-white"
               }`}
+              style={
+                filter === key
+                  ? { boxShadow: "0 0 12px -2px rgba(255,255,255,0.4)" }
+                  : undefined
+              }
             >
               {label}
             </button>
           ))}
-          <div className="ml-auto flex items-center gap-1.5 self-center">
+          <div className="ml-auto flex items-center gap-2">
             {refreshing && hasCached && (
-              <Spinner size="sm" className="!w-3 !h-3 !text-surface-600" />
+              <Spinner size="sm" className="!w-3 !h-3 !text-white/40" />
             )}
             {total > 0 && (
-              <span className="text-xs text-surface-600 tabular-nums">
+              <span className="led-spec text-[10px]">
                 {total} total
               </span>
             )}
@@ -151,12 +156,12 @@ export default function Transactions() {
           </div>
         ) : txs.length === 0 ? (
           <div className="text-center py-16">
-            <div className="w-12 h-12 bg-white/[0.04] rounded-full flex items-center justify-center mx-auto mb-3">
-              <svg className="w-6 h-6 text-surface-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <div className="w-12 h-12 bg-white/[0.04] border border-white/[0.1] rounded-[3px] flex items-center justify-center mx-auto mb-3">
+              <svg className="w-6 h-6 text-white/35" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
               </svg>
             </div>
-            <p className="text-sm text-surface-600">No transactions found</p>
+            <p className="led-text text-[11px] font-bold text-white/45">No transactions found</p>
           </div>
         ) : (
           <>
@@ -172,7 +177,7 @@ export default function Transactions() {
               <button
                 onClick={handleLoadMore}
                 disabled={loadingMore}
-                className="w-full py-2.5 text-sm text-gonka-400 hover:text-gonka-300 transition-colors flex items-center justify-center gap-2"
+                className="led-text w-full py-2.5 text-[11px] font-extrabold text-white/55 hover:text-white transition-colors flex items-center justify-center gap-2"
               >
                 {loadingMore ? (
                   <>
@@ -180,7 +185,7 @@ export default function Transactions() {
                     Loading...
                   </>
                 ) : (
-                  "Load more"
+                  "↓ Load more"
                 )}
               </button>
             )}

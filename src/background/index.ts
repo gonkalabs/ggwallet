@@ -38,7 +38,13 @@ import {
   type VoteOption,
 } from "@/lib/cosmos";
 import { GNS_CONTRACT_ADDRESS } from "@/lib/gonka";
-import { getActiveEndpoint, setActiveEndpoint, RpcEndpoint } from "@/lib/rpc";
+import {
+  getActiveEndpoint,
+  setActiveEndpoint,
+  getGonkaRpcApiKey,
+  setGonkaRpcApiKey,
+  RpcEndpoint,
+} from "@/lib/rpc";
 import {
   handleProviderRequest,
   getConnectedSites,
@@ -324,6 +330,39 @@ async function handleMessage(msg: any): Promise<any> {
       await setActiveEndpoint(ep);
       resetClient();
       return { success: true };
+    }
+
+    // ---- rpc.gonka.gg API key (overrides active RPC endpoint when set) ----
+
+    case "GET_GONKA_RPC_KEY": {
+      const key = await getGonkaRpcApiKey();
+      return { key };
+    }
+
+    case "SET_GONKA_RPC_KEY": {
+      const raw: string | null = msg.key ?? null;
+      try {
+        if (raw && raw.trim()) {
+          // Verify the key works before saving — CometBFT /status round-trip.
+          const url = `https://rpc.gonka.gg/key/${encodeURIComponent(
+            raw.trim()
+          )}/chain-rpc/status`;
+          const resp = await fetch(url, {
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!resp.ok) {
+            return {
+              success: false,
+              error: `rpc.gonka.gg rejected the key (HTTP ${resp.status})`,
+            };
+          }
+        }
+        await setGonkaRpcApiKey(raw);
+        resetClient();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Failed to verify key" };
+      }
     }
 
     // ---- Provider (Keplr-compatible API for dApps) ----

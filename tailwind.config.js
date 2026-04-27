@@ -31,6 +31,18 @@ export default {
           900: "#0d0d12",
           950: "#000000",
         },
+        // LED/CRT terminal palette — used by .led-* component classes.
+        led: {
+          white: "#ffffff",
+          dim: "rgba(255,255,255,0.55)",
+          dimmer: "rgba(255,255,255,0.35)",
+          divider: "rgba(255,255,255,0.15)",
+          bezelFrom: "#1a1d24",
+          bezelTo: "#0e1015",
+          bg: "#060810",
+          panel: "#0a0d16",
+          border: "rgba(255,255,255,0.10)",
+        },
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
@@ -47,6 +59,9 @@ export default {
         card: "0 2px 8px rgba(0, 0, 0, 0.4)",
         "card-hover": "0 4px 16px rgba(0, 0, 0, 0.5)",
         modal: "0 -4px 32px rgba(0, 0, 0, 0.6)",
+        // LED bezel — inset highlight on top, soft drop shadow below.
+        bezel:
+          "inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 30px -12px rgba(0,0,0,0.6)",
       },
       animation: {
         "slide-up": "slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
