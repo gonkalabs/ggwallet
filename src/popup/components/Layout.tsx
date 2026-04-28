@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import RpcUsageBanner from "./RpcUsageBanner";
 
 interface LayoutProps {
   children: ReactNode;
@@ -50,7 +51,10 @@ export default function Layout({
         </header>
       )}
 
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <main className="flex-1 overflow-y-auto">
+        <RpcUsageBanner />
+        {children}
+      </main>
 
       {showNav && (
         <nav className="grid grid-cols-3 px-1 py-1 h-14 shrink-0 led-divider-top bg-led-bg/80 backdrop-blur-sm">

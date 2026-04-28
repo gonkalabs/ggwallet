@@ -1,6 +1,6 @@
 # GG Wallet
 
-[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) (v0.1.7) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
+[**→ Install from Chrome Web Store**](https://chromewebstore.google.com/detail/gg-wallet/elicodfmaffbndngiifcpmammicgjidd) (v0.1.8) — or install from the [latest release](https://github.com/gonkalabs/ggwallet/releases) / build from source.
 
 
 A browser extension wallet built exclusively for the **Gonka blockchain** network.

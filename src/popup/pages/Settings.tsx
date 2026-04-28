@@ -5,7 +5,13 @@ import { sendMessage } from "@/lib/messaging";
 import { truncateAddress } from "@/lib/format";
 import { GONKA_CHAIN_ID, GONKA_CHAIN_NAME, GONKA_BECH32_PREFIX } from "@/lib/gonka";
 import { KNOWN_ENDPOINTS, pingEndpoint, GONKA_RPC_SIGNUP_URL, type RpcEndpoint } from "@/lib/rpc";
-import type { ConnectedSite, AddressBookEntry } from "@/lib/storage";
+import type {
+  ConnectedSite,
+  AddressBookEntry,
+  GonkaRpcAutoMeta,
+  GonkaRpcUsage,
+  GonkaRpcProviderPref,
+} from "@/lib/storage";
 import Layout from "@/popup/components/Layout";
 import PasswordInput from "@/popup/components/PasswordInput";
 import Spinner from "@/popup/components/Spinner";
@@ -53,13 +59,23 @@ export default function Settings() {
   const [customRest, setCustomRest] = useState("");
   const [rpcSaving, setRpcSaving] = useState(false);
 
-  // Gonka RPC API key (rpc.gonka.gg)
+  // rpc.gonka.gg — manual API key (power-user override)
   const [gonkaKey, setGonkaKey] = useState<string | null>(null);
   const [gonkaKeyModal, setGonkaKeyModal] = useState(false);
   const [gonkaKeyInput, setGonkaKeyInput] = useState("");
   const [gonkaKeyVisible, setGonkaKeyVisible] = useState(false);
   const [gonkaKeySaving, setGonkaKeySaving] = useState(false);
   const [gonkaKeyError, setGonkaKeyError] = useState("");
+
+  // rpc.gonka.gg — auto-issued key (per-install free tier)
+  const [autoKey, setAutoKey] = useState<string | null>(null);
+  const [autoMeta, setAutoMeta] = useState<GonkaRpcAutoMeta | null>(null);
+  const [autoUsage, setAutoUsage] = useState<GonkaRpcUsage | null>(null);
+  const [autoKeyVisible, setAutoKeyVisible] = useState(false);
+  const [autoKeyBusy, setAutoKeyBusy] = useState<"" | "issue" | "rotate" | "revoke">("");
+
+  // RPC provider preference: "gonka" (default) | "public" (opt-out)
+  const [providerPref, setProviderPref] = useState<GonkaRpcProviderPref>("gonka");
 
   // Load all settings on mount
   useEffect(() => {
@@ -77,6 +93,26 @@ export default function Settings() {
     });
     sendMessage({ type: "GET_GONKA_RPC_KEY" }).then((resp) => {
       setGonkaKey(resp?.key || null);
+    });
+    sendMessage({ type: "GET_GONKA_AUTO_KEY_STATE" }).then((resp) => {
+      const s = resp?.state;
+      if (s) {
+        setAutoKey(s.apiKey || null);
+        setAutoMeta(s.meta || null);
+        setAutoUsage(s.usage || null);
+      }
+    });
+    sendMessage({ type: "GET_RPC_PROVIDER_PREF" }).then((resp) => {
+      setProviderPref(resp?.pref === "public" ? "public" : "gonka");
+    });
+    // Authoritative usage refresh from the server (single round-trip).
+    sendMessage({ type: "REFRESH_GONKA_USAGE" }).then((resp) => {
+      const s = resp?.state;
+      if (s) {
+        setAutoKey(s.apiKey || null);
+        setAutoMeta(s.meta || null);
+        setAutoUsage(s.usage || null);
+      }
     });
   }, []);
 
@@ -148,8 +184,11 @@ export default function Settings() {
 
   const selectEndpoint = async (ep: RpcEndpoint) => {
     setRpcSaving(true);
+    // Picking a node from the public list implies "use public RPC".
     await sendMessage({ type: "SET_RPC_ENDPOINT", endpoint: ep });
+    await sendMessage({ type: "SET_RPC_PROVIDER_PREF", pref: "public" });
     setActiveRpc(ep);
+    setProviderPref("public");
     setRpcSaving(false);
   };
 
@@ -199,6 +238,87 @@ export default function Settings() {
 
   const maskedKey = (key: string) =>
     key.length <= 10 ? key : `${key.slice(0, 8)}…${key.slice(-4)}`;
+
+  // ----- rpc.gonka.gg auto-key handlers -----------------------------------
+  const reloadAutoKeyState = async () => {
+    const resp = await sendMessage({ type: "GET_GONKA_AUTO_KEY_STATE" });
+    const s = resp?.state;
+    if (s) {
+      setAutoKey(s.apiKey || null);
+      setAutoMeta(s.meta || null);
+      setAutoUsage(s.usage || null);
+    }
+    const epResp = await sendMessage({ type: "GET_RPC_ENDPOINT" });
+    if (epResp?.endpoint) setActiveRpc(epResp.endpoint);
+  };
+
+  const handleIssueAutoKey = async () => {
+    setAutoKeyBusy("issue");
+    await sendMessage({ type: "ENSURE_GONKA_AUTO_KEY" });
+    await reloadAutoKeyState();
+    setAutoKeyBusy("");
+  };
+
+  const handleRotateAutoKey = async () => {
+    if (!confirm("Rotate the rpc.gonka.gg auto key? The current key will be invalidated.")) return;
+    setAutoKeyBusy("rotate");
+    await sendMessage({ type: "REFRESH_GONKA_AUTO_KEY" });
+    await reloadAutoKeyState();
+    setAutoKeyBusy("");
+  };
+
+  const handleRevokeAutoKey = async () => {
+    if (!confirm("Revoke the rpc.gonka.gg auto key? The wallet will fall back to public RPC until a new key is issued.")) return;
+    setAutoKeyBusy("revoke");
+    await sendMessage({ type: "REVOKE_GONKA_AUTO_KEY" });
+    await reloadAutoKeyState();
+    setAutoKeyBusy("");
+  };
+
+  const handleSetProviderPref = async (pref: GonkaRpcProviderPref) => {
+    await sendMessage({ type: "SET_RPC_PROVIDER_PREF", pref });
+    setProviderPref(pref);
+    const epResp = await sendMessage({ type: "GET_RPC_ENDPOINT" });
+    if (epResp?.endpoint) setActiveRpc(epResp.endpoint);
+  };
+
+  // ----- Display helpers --------------------------------------------------
+  const effectiveKey: "manual" | "auto" | "none" = gonkaKey
+    ? "manual"
+    : autoKey
+    ? "auto"
+    : "none";
+
+  const rpcRowDescription = (() => {
+    if (providerPref === "public") {
+      return `${activeRpc?.label || "Public RPC"} · public, slower`;
+    }
+    if (effectiveKey === "manual") return "rpc.gonka.gg · custom key";
+    if (effectiveKey === "auto") {
+      const tier = autoMeta?.tier || "wallet-install";
+      const used = autoUsage ? autoUsage.limitDay - autoUsage.remainingDay : null;
+      const limit = autoUsage?.limitDay ?? autoMeta?.quotaPerDay ?? null;
+      if (used != null && limit != null) {
+        return `rpc.gonka.gg · ${tier} · ${used.toLocaleString()}/${limit.toLocaleString()} today`;
+      }
+      return `rpc.gonka.gg · ${tier}`;
+    }
+    return "rpc.gonka.gg · issuing key…";
+  })();
+
+  const dayPct =
+    autoUsage && autoUsage.limitDay > 0
+      ? Math.min(100, Math.round(((autoUsage.limitDay - autoUsage.remainingDay) / autoUsage.limitDay) * 100))
+      : 0;
+  const minPct =
+    autoUsage && autoUsage.limitMinute > 0
+      ? Math.min(100, Math.round(((autoUsage.limitMinute - autoUsage.remainingMinute) / autoUsage.limitMinute) * 100))
+      : 0;
+  const renderBar = (pct: number) => {
+    const total = 14;
+    const filled = Math.round((pct / 100) * total);
+    return "▓".repeat(filled) + "░".repeat(total - filled);
+  };
 
   const handleLock = async () => {
     await lock();
@@ -365,11 +485,7 @@ export default function Settings() {
           <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
             <SettingsRow
               label="RPC Endpoint"
-              description={
-                gonkaKey
-                  ? "rpc.gonka.gg (via API key)"
-                  : activeRpc?.label || "Loading..."
-              }
+              description={rpcRowDescription}
               onClick={() => {
                 setRpcModal(true);
                 runPings();
@@ -381,11 +497,17 @@ export default function Settings() {
               }
             />
             <SettingsRow
-              label="rpc.gonka.gg API Key"
+              label="rpc.gonka.gg Key"
               description={
                 gonkaKey
-                  ? `Active — ${maskedKey(gonkaKey)} · faster tx history`
-                  : "Optional — unlocks a faster RPC + tx history"
+                  ? `Custom key · ${maskedKey(gonkaKey)}`
+                  : autoKey
+                  ? `Auto · ${autoMeta?.tier || "wallet-install"} · ${
+                      autoUsage
+                        ? `${(autoUsage.limitDay - autoUsage.remainingDay).toLocaleString()}/${autoUsage.limitDay.toLocaleString()} today`
+                        : "free tier"
+                    }`
+                  : "Issuing free-tier key…"
               }
               onClick={openGonkaKeyModal}
               icon={
@@ -577,6 +699,26 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Developer */}
+        <div>
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
+            Developer
+          </h3>
+          <div className="card space-y-0 divide-y divide-white/[0.04] !p-0">
+            <SettingsRow
+              label="Run inferenced Command"
+              description="Paste any inferenced tx or query command — the wallet handles signing"
+              onClick={() => navigate("/run-command")}
+              icon={
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+                </svg>
+              }
+            />
+          </div>
+        </div>
+
         {/* Node Operations */}
         <div>
           <h3 className="led-eyebrow mb-2 ml-1">
@@ -615,7 +757,7 @@ export default function Settings() {
           </h3>
           <div className="card space-y-2">
             <p className="led-text text-[12px] font-extrabold text-white led-glow-soft">
-              GG Wallet · v0.1.7
+              GG Wallet · v0.1.8
             </p>
             <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
               Open-source, community wallet for the Gonka.ai blockchain
@@ -756,26 +898,57 @@ export default function Settings() {
               </button>
             </div>
 
-            {gonkaKey && (
-              <div className="led-panel p-3 shrink-0">
-                <div className="flex items-start gap-2">
-                  <span className="led-eyebrow-dot mt-1 shrink-0" />
-                  <div className="space-y-1">
-                    <p className="led-text text-[11px] font-extrabold text-white led-glow-soft">
-                      rpc.gonka.gg API key is active
-                    </p>
-                    <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
-                      All RPC/REST calls go through rpc.gonka.gg. Clear the key in
-                      Settings to switch back to another node.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
+            <div className="overflow-y-auto flex-1 -mx-1 px-1 space-y-3">
+              {/* rpc.gonka.gg — default */}
+              {(() => {
+                const isActive = providerPref === "gonka";
+                const hasKey = !!(gonkaKey || autoKey);
+                return (
+                  <button
+                    onClick={() => handleSetProviderPref("gonka")}
+                    disabled={rpcSaving || !hasKey}
+                    className={`flex items-center gap-3 w-full p-3 rounded-xl text-left transition-all duration-200 border ${
+                      isActive
+                        ? "bg-white/[0.06] border-white/30"
+                        : "bg-transparent border-white/10 hover:border-white/25 hover:bg-white/[0.03]"
+                    } ${!hasKey ? "opacity-60" : ""}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="led-text text-[12px] font-extrabold text-white truncate">
+                          rpc.gonka.gg
+                        </p>
+                        <span className="led-text text-[9px] font-extrabold text-white/65 border border-white/15 px-1.5 py-0.5 rounded-[3px]">
+                          DEFAULT
+                        </span>
+                        {isActive && (
+                          <span className="led-text text-[9px] font-extrabold text-surface-950 bg-white px-1.5 py-0.5 rounded-[3px]" style={{ boxShadow: "0 0 6px rgba(255,255,255,0.4)" }}>
+                            ACTIVE
+                          </span>
+                        )}
+                      </div>
+                      <p className="led-text text-[10px] font-medium text-white/55 truncate mt-0.5" style={{ letterSpacing: "0.04em" }}>
+                        {gonkaKey ? `Custom key · ${maskedKey(gonkaKey)}` :
+                         autoKey ? `Auto · ${autoMeta?.tier || "wallet-install"}` :
+                         "Issuing free-tier key — retry from rpc.gonka.gg Key card"}
+                      </p>
+                    </div>
+                    <div className="led-text text-[10px] font-extrabold tabular-nums text-white/65 shrink-0">
+                      ~100×
+                    </div>
+                  </button>
+                );
+              })()}
 
-            <div className="overflow-y-auto flex-1 -mx-1 px-1 space-y-1.5">
+              <div className="led-divider-top pt-3">
+                <p className="led-eyebrow mb-2">
+                  <span className="led-eyebrow-dot" />
+                  Public RPCs (slower)
+                </p>
+              </div>
+
               {KNOWN_ENDPOINTS.map((ep) => {
-                const isActive = activeRpc?.rpc === ep.rpc;
+                const isActive = providerPref === "public" && activeRpc?.rpc === ep.rpc;
                 const ping = pings[ep.rpc];
                 const pingColor =
                   ping === undefined
@@ -887,7 +1060,7 @@ export default function Settings() {
         <div className="fixed inset-0 bg-black/70 flex items-end z-50 animate-fade-in">
           <div className="w-full led-display border-t border-white/[0.08] rounded-t-3xl p-5 space-y-4 animate-slide-up shadow-modal max-h-[90%] flex flex-col">
             <div className="flex items-center justify-between shrink-0">
-              <h3 className="led-title text-base">rpc.gonka.gg API Key</h3>
+              <h3 className="led-title text-base">rpc.gonka.gg Key</h3>
               <button
                 onClick={() => setGonkaKeyModal(false)}
                 className="p-1.5 hover:bg-white/5 rounded-xl transition-colors"
@@ -899,43 +1072,126 @@ export default function Settings() {
             </div>
 
             <div className="overflow-y-auto flex-1 -mx-1 px-1 space-y-4">
-              <div className="led-panel p-3.5 space-y-2">
-                <div className="flex items-start gap-2">
-                  <span className="led-eyebrow-dot mt-1 shrink-0" />
-                  <p className="led-text text-[11px] font-bold text-white/80" style={{ letterSpacing: "0.04em" }}>
-                    Route the wallet's RPC/REST through the managed{" "}
-                    <span className="text-white led-glow-soft">rpc.gonka.gg</span>{" "}
-                    gateway.
+              {/* AUTO key — issued per install, free tier. */}
+              <div className="led-panel p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="led-eyebrow">
+                    <span className="led-eyebrow-dot" />
+                    Auto Key (free tier)
                   </p>
+                  {autoMeta?.tier && (
+                    <span className="led-spec text-[10px]">
+                      {autoMeta.tier}
+                    </span>
+                  )}
                 </div>
-                <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
-                  Activity history also switches to the ClickHouse-indexed
-                  endpoint — ~100x faster than the default explorer.
-                </p>
-                {gonkaKey && (
-                  <p className="led-spec text-[10px] pt-1">
-                    Active · {maskedKey(gonkaKey)}
-                  </p>
+
+                {autoKey ? (
+                  <>
+                    <p className="led-text text-[11px] font-extrabold text-white led-glow-soft tabular-nums break-all">
+                      {autoKeyVisible ? autoKey : maskedKey(autoKey)}
+                    </p>
+
+                    {autoUsage && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="led-text font-bold text-white/55">USAGE TODAY</span>
+                          <span className="led-text font-extrabold text-white tabular-nums">
+                            {(autoUsage.limitDay - autoUsage.remainingDay).toLocaleString()}
+                            {" / "}
+                            {autoUsage.limitDay.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="led-text text-[11px] font-extrabold tracking-widest text-white/80">
+                          {renderBar(dayPct)}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10px] pt-1">
+                          <span className="led-text font-bold text-white/55">USAGE / MIN</span>
+                          <span className="led-text font-extrabold text-white tabular-nums">
+                            {(autoUsage.limitMinute - autoUsage.remainingMinute).toLocaleString()}
+                            {" / "}
+                            {autoUsage.limitMinute.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="led-text text-[11px] font-extrabold tracking-widest text-white/80">
+                          {renderBar(minPct)}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 pt-2">
+                      <button
+                        onClick={() => setAutoKeyVisible((v) => !v)}
+                        className="led-text flex-1 py-2 text-[10px] font-extrabold text-white/65 hover:text-white border border-white/15 hover:border-white/30 rounded-xl transition-colors"
+                      >
+                        {autoKeyVisible ? "Hide" : "Show"}
+                      </button>
+                      <button
+                        onClick={handleRotateAutoKey}
+                        disabled={autoKeyBusy !== ""}
+                        className="led-text flex-1 py-2 text-[10px] font-extrabold text-white/65 hover:text-white border border-white/15 hover:border-white/30 rounded-xl transition-colors flex items-center justify-center gap-1"
+                      >
+                        {autoKeyBusy === "rotate" ? <Spinner size="sm" className="!w-3 !h-3" /> : "↻"}
+                        Refresh
+                      </button>
+                      <button
+                        onClick={handleRevokeAutoKey}
+                        disabled={autoKeyBusy !== ""}
+                        className="led-text flex-1 py-2 text-[10px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-xl transition-colors"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="led-text text-[11px] font-bold text-white/65" style={{ letterSpacing: "0.04em" }}>
+                      No auto key yet. The wallet mints one on first install — if it failed, retry below.
+                    </p>
+                    <button
+                      onClick={handleIssueAutoKey}
+                      disabled={autoKeyBusy !== ""}
+                      className="btn-secondary !py-2.5 text-sm flex items-center justify-center gap-2"
+                    >
+                      {autoKeyBusy === "issue" ? (
+                        <>
+                          <Spinner size="sm" />
+                          Issuing…
+                        </>
+                      ) : (
+                        "▶ Issue free-tier key"
+                      )}
+                    </button>
+                  </>
                 )}
               </div>
 
+              {/* Tier upgrade CTA */}
               <button
-                onClick={() =>
-                  chrome.tabs.create({ url: GONKA_RPC_SIGNUP_URL })
-                }
+                onClick={() => chrome.tabs.create({ url: `${GONKA_RPC_SIGNUP_URL}/?upgrade=1&from=ext` })}
                 className="btn-secondary !py-2.5 text-sm flex items-center justify-center gap-2"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                 </svg>
-                Get API Key
+                Get a personal key
               </button>
 
-              <div className="space-y-2">
+              {/* MANUAL override */}
+              <div className="led-panel p-3.5 space-y-3">
                 <p className="led-eyebrow">
                   <span className="led-eyebrow-dot" />
-                  {gonkaKey ? "Replace key" : "Paste your key"}
+                  Manual override
                 </p>
+                <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
+                  Paste a personal / paid key here. When set, this overrides the auto key for all RPC calls.
+                </p>
+                {gonkaKey && (
+                  <p className="led-spec text-[10px]">
+                    Active · {maskedKey(gonkaKey)}
+                  </p>
+                )}
                 <div className="relative">
                   <input
                     type={gonkaKeyVisible ? "text" : "password"}
@@ -960,35 +1216,35 @@ export default function Settings() {
                 {gonkaKeyError && (
                   <p className="led-text text-[10px] font-bold text-red-400">{gonkaKeyError}</p>
                 )}
-              </div>
-            </div>
 
-            <div className="flex gap-2 shrink-0 pt-3 led-divider-top">
-              {gonkaKey && (
-                <button
-                  onClick={handleClearGonkaKey}
-                  disabled={gonkaKeySaving}
-                  className="led-text flex-1 py-2.5 text-[11px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-2xl transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-              <button
-                onClick={handleSaveGonkaKey}
-                disabled={gonkaKeySaving || !gonkaKeyInput}
-                className="btn-primary !py-2.5 text-sm flex-1 flex items-center justify-center gap-2"
-              >
-                {gonkaKeySaving ? (
-                  <>
-                    <Spinner size="sm" />
-                    Verifying...
-                  </>
-                ) : gonkaKey ? (
-                  "Replace"
-                ) : (
-                  "Save"
-                )}
-              </button>
+                <div className="flex gap-2 pt-1">
+                  {gonkaKey && (
+                    <button
+                      onClick={handleClearGonkaKey}
+                      disabled={gonkaKeySaving}
+                      className="led-text flex-1 py-2 text-[10px] font-extrabold text-red-400 border border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 rounded-xl transition-colors"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={handleSaveGonkaKey}
+                    disabled={gonkaKeySaving || !gonkaKeyInput}
+                    className="btn-primary !py-2 text-xs flex-1 flex items-center justify-center gap-2"
+                  >
+                    {gonkaKeySaving ? (
+                      <>
+                        <Spinner size="sm" />
+                        Verifying…
+                      </>
+                    ) : gonkaKey ? (
+                      "Replace"
+                    ) : (
+                      "Save"
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

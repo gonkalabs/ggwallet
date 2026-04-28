@@ -16,7 +16,9 @@ import Proposals from "@/popup/pages/Proposals";
 import ProposalDetail from "@/popup/pages/ProposalDetail";
 import CreateProposal from "@/popup/pages/CreateProposal";
 import GnsNames from "@/popup/pages/GnsNames";
+import RunCommand from "@/popup/pages/RunCommand";
 import Spinner from "@/popup/components/Spinner";
+import SystemUpdateOverlay from "@/popup/components/SystemUpdateOverlay";
 
 export default function App() {
   const { isInitialized, isUnlocked, checkState } = useWalletStore();
@@ -47,6 +49,7 @@ export default function App() {
 
   return (
     <div className="w-[380px] h-[600px] flex flex-col bg-surface-950 text-white overflow-hidden animate-popup-in">
+      <SystemUpdateOverlay />
       <Routes>
         {!isInitialized ? (
           <>
@@ -72,6 +75,7 @@ export default function App() {
             <Route path="/proposals/create" element={<CreateProposal />} />
             <Route path="/proposals/:id" element={<ProposalDetail />} />
             <Route path="/names" element={<GnsNames />} />
+            <Route path="/run-command" element={<RunCommand />} />
             <Route path="/add-wallet" element={<AddWallet />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </>

@@ -1,5 +1,6 @@
 import { GONKA_EXPLORER_URL, GONKA_EXPLORER_API_KEY } from "./gonka";
-import { GONKA_RPC_BASE_URL, getGonkaRpcApiKey } from "./rpc";
+import { GONKA_RPC_BASE_URL, getEffectiveApiKey } from "./rpc";
+import { captureUsageFromHeaders, rotateAutoKey, getAutoApiKey } from "./gonka-key-service";
 
 /**
  * Transaction history API.
@@ -55,7 +56,7 @@ export async function fetchTransactions(
   pageSize = 20,
   direction: "all" | "sent" | "received" = "all"
 ): Promise<TransactionsResponse> {
-  const gonkaKey = await getGonkaRpcApiKey();
+  const gonkaKey = await getEffectiveApiKey();
   if (gonkaKey) {
     return fetchTransactionsViaGonkaRpc(address, gonkaKey, page, pageSize, direction);
   }
@@ -114,11 +115,31 @@ async function fetchTransactionsViaGonkaRpc(
   direction: "all" | "sent" | "received"
 ): Promise<TransactionsResponse> {
   const offset = Math.max(0, (page - 1) * pageSize);
-  const url =
-    `${GONKA_RPC_BASE_URL}/key/${encodeURIComponent(apiKey)}` +
-    `/api/ch/address/${address}?limit=${pageSize}&offset=${offset}`;
+  const path = `/api/ch/address/${address}?limit=${pageSize}&offset=${offset}`;
+  const url = `${GONKA_RPC_BASE_URL}/key/${encodeURIComponent(apiKey)}${path}`;
 
-  const resp = await fetch(url);
+  let resp = await fetch(url);
+  // Capture rate-limit headers into local usage state so the UI can warn
+  // before quota is exhausted. Best-effort.
+  captureUsageFromHeaders(resp.headers).catch(() => {});
+
+  // Auto-rotate-on-401 — when the auto key was revoked server-side, mint
+  // a fresh one and retry once. Only kicks in for the auto-key path; a
+  // user's manual key is left alone (we surface the error so they can fix it).
+  if (resp.status === 401) {
+    const auto = await getAutoApiKey();
+    if (auto && auto === apiKey) {
+      try {
+        const rotated = await rotateAutoKey();
+        const retryUrl =
+          `${GONKA_RPC_BASE_URL}/key/${encodeURIComponent(rotated.apiKey)}${path}`;
+        resp = await fetch(retryUrl);
+        captureUsageFromHeaders(resp.headers).catch(() => {});
+      } catch {
+        // fall through with the original 401 — caller surfaces the error
+      }
+    }
+  }
 
   if (!resp.ok) {
     throw new Error(`rpc.gonka.gg error: ${resp.status} ${resp.statusText}`);

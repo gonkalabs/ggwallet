@@ -38,13 +38,25 @@ import {
   type VoteOption,
 } from "@/lib/cosmos";
 import { GNS_CONTRACT_ADDRESS } from "@/lib/gonka";
+import { parseCommand, isQueryIntent } from "@/lib/inferenced-parser";
+import { executeIntent, runQuery } from "@/lib/inferenced-executor";
 import {
   getActiveEndpoint,
   setActiveEndpoint,
   getGonkaRpcApiKey,
   setGonkaRpcApiKey,
+  getActiveProvider,
+  setActiveProvider,
   RpcEndpoint,
 } from "@/lib/rpc";
+import {
+  ensureAutoApiKey,
+  rotateAutoKey,
+  revokeAutoKey,
+  getAutoKeyState,
+  getKeyInfo,
+} from "@/lib/gonka-key-service";
+import type { GonkaRpcProviderPref } from "@/lib/storage";
 import {
   handleProviderRequest,
   getConnectedSites,
@@ -72,6 +84,28 @@ function broadcastKeystoreChange(): void {
 
 // Load persisted settings on startup
 loadSettings();
+
+// Acquire / verify the rpc.gonka.gg auto-issued API key.
+//
+// We trigger from two places (idempotent — guarded by an in-flight lock
+// inside ensureAutoApiKey()):
+//
+//   1. chrome.runtime.onInstalled — the canonical "first run / update"
+//      hook. Fires on `install` and `update`.
+//   2. Service-worker cold-start — every time the SW wakes up. If the key
+//      is already in storage this is a fast no-op; if it's missing (fresh
+//      install + onInstalled missed, storage cleared, etc.) the wallet
+//      mints one. ensureAutoApiKey() does the PoW + binding for us.
+//
+// Failures are non-fatal: the wallet falls back to public RPC until the
+// next opportunity to retry (next SW wake, or the manual Refresh button
+// in Settings).
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === "install" || details.reason === "update") {
+    ensureAutoApiKey().catch(() => {});
+  }
+});
+ensureAutoApiKey().catch(() => {});
 
 // Auto-lock alarm — fires every minute to check if the lock deadline
 // has passed. This is the reliable fallback for when the service worker
@@ -318,6 +352,51 @@ async function handleMessage(msg: any): Promise<any> {
       return { success: true, mnemonic };
     }
 
+    // ---- inferenced CLI runner ----
+    //
+    // Two-step flow so the popup can render a parsed-preview screen
+    // (chain, sender, module/action, amounts, msg, warnings) before
+    // the user confirms. PARSE_INFERENCED_CMD does no signing and
+    // never throws — it just returns the parser's verdict. The popup
+    // then calls RUN_INFERENCED_CMD when the user clicks Execute.
+
+    case "PARSE_INFERENCED_CMD": {
+      const raw: string = msg.command || "";
+      const address = isUnlocked() ? getAddress() : await getStoredAddress();
+      const parsed = parseCommand(raw, address ?? undefined);
+      return { parsed };
+    }
+
+    case "RUN_INFERENCED_CMD": {
+      const raw: string = msg.command || "";
+      const unlocked = isUnlocked();
+      const address = unlocked ? getAddress() : await getStoredAddress();
+      const parsed = parseCommand(raw, address ?? undefined);
+      if (!parsed.ok) {
+        return { success: false, error: parsed.error, parsed };
+      }
+      // Read-only queries: no signing, no unlock requirement.
+      if (isQueryIntent(parsed.intent)) {
+        try {
+          const queryResult = await runQuery(parsed.intent);
+          return { success: true, queryResult, parsed };
+        } catch (e: any) {
+          return { success: false, error: e?.message || "Query failed", parsed };
+        }
+      }
+      // Transactions: require an unlocked wallet.
+      const mnemonic = getMnemonic();
+      if (!mnemonic) {
+        return { success: false, error: "Wallet is locked", parsed };
+      }
+      try {
+        const result = await executeIntent(parsed.intent, mnemonic);
+        return { success: true, result, parsed };
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Execution failed", parsed };
+      }
+    }
+
     // ---- RPC ----
 
     case "GET_RPC_ENDPOINT": {
@@ -332,7 +411,7 @@ async function handleMessage(msg: any): Promise<any> {
       return { success: true };
     }
 
-    // ---- rpc.gonka.gg API key (overrides active RPC endpoint when set) ----
+    // ---- rpc.gonka.gg manual API key (power-user override) ----
 
     case "GET_GONKA_RPC_KEY": {
       const key = await getGonkaRpcApiKey();
@@ -363,6 +442,74 @@ async function handleMessage(msg: any): Promise<any> {
       } catch (e: any) {
         return { success: false, error: e?.message || "Failed to verify key" };
       }
+    }
+
+    // ---- rpc.gonka.gg auto-issued API key (per-install, free tier) ----
+
+    case "GET_GONKA_AUTO_KEY_STATE": {
+      // Returns { apiKey, meta, usage, installId }. No round-trip — read
+      // from local storage. Settings can call REFRESH_GONKA_USAGE for a
+      // fresh server-side snapshot.
+      const state = await getAutoKeyState();
+      return { state };
+    }
+
+    case "ENSURE_GONKA_AUTO_KEY": {
+      // Manual nudge — used by Settings "Issue key" / "Retry" button.
+      try {
+        const apiKey = await ensureAutoApiKey();
+        if (!apiKey) return { success: false, error: "Issuance failed" };
+        resetClient();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Issuance failed" };
+      }
+    }
+
+    case "REFRESH_GONKA_AUTO_KEY": {
+      // Rotate — invalidates the old key, mints a new one. Settings's
+      // "Refresh" button. Skips PoW server-side.
+      try {
+        await rotateAutoKey();
+        resetClient();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Rotate failed" };
+      }
+    }
+
+    case "REVOKE_GONKA_AUTO_KEY": {
+      try {
+        await revokeAutoKey();
+        resetClient();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e?.message || "Revoke failed" };
+      }
+    }
+
+    case "REFRESH_GONKA_USAGE": {
+      // Server-side authoritative usage snapshot. Used when Settings opens
+      // and after operations that should bump the counter.
+      const info = await getKeyInfo().catch(() => null);
+      // Read the freshly-captured usage state from storage (gonkaAdminFetch
+      // updated it via the response headers).
+      const state = await getAutoKeyState();
+      return { info, state };
+    }
+
+    // ---- RPC provider preference ("gonka" default | "public" opt-out) ----
+
+    case "GET_RPC_PROVIDER_PREF": {
+      const pref = await getActiveProvider();
+      return { pref };
+    }
+
+    case "SET_RPC_PROVIDER_PREF": {
+      const pref: GonkaRpcProviderPref = msg.pref === "public" ? "public" : "gonka";
+      await setActiveProvider(pref);
+      resetClient();
+      return { success: true };
     }
 
     // ---- Provider (Keplr-compatible API for dApps) ----

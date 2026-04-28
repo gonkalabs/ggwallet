@@ -1,13 +1,16 @@
 import { StargateClient, SigningStargateClient, GasPrice, coin, defaultRegistryTypes } from "@cosmjs/stargate";
 import { DirectSecp256k1HdWallet, Registry } from "@cosmjs/proto-signing";
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve, stringToPath } from "@cosmjs/crypto";
-import { MsgExecuteContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
+import { MsgExecuteContract, MsgInstantiateContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
+import { MsgBeginRedelegate } from "cosmjs-types/cosmos/staking/v1beta1/tx";
 import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE, GONKA_DECIMALS, GONKA_DISPLAY_DENOM } from "./gonka";
 import { getActiveEndpoint } from "./rpc";
 
 const registry = new Registry([
   ...defaultRegistryTypes,
   ["/cosmwasm.wasm.v1.MsgExecuteContract", MsgExecuteContract],
+  ["/cosmwasm.wasm.v1.MsgInstantiateContract", MsgInstantiateContract],
+  ["/cosmos.staking.v1beta1.MsgBeginRedelegate", MsgBeginRedelegate],
 ]);
 
 export interface TokenBalance {
@@ -570,6 +573,80 @@ export async function withdrawRewards(
   }
 
   return { txHash: result.transactionHash };
+}
+
+/**
+ * Redelegate stake from one validator to another. Used by the
+ * inferenced-runner's `tx staking redelegate` mapping.
+ */
+export async function redelegateTokens(
+  mnemonic: string,
+  srcValidator: string,
+  dstValidator: string,
+  amount: string,
+  memo = ""
+): Promise<{ txHash: string }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const msg = {
+    typeUrl: "/cosmos.staking.v1beta1.MsgBeginRedelegate",
+    value: {
+      delegatorAddress: address,
+      validatorSrcAddress: srcValidator,
+      validatorDstAddress: dstValidator,
+      amount: coin(amount, GONKA_DENOM),
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [msg], "auto", memo);
+  if (result.code !== 0) {
+    throw new Error(`Redelegation failed: ${result.rawLog}`);
+  }
+  return { txHash: result.transactionHash };
+}
+
+/**
+ * Instantiate a CosmWasm contract from a stored code id.
+ * Mirrors `inferenced tx wasm instantiate <code-id> <init-json> --label …`.
+ */
+export async function instantiateContract(
+  mnemonic: string,
+  codeId: string,
+  initMsg: object,
+  label: string,
+  admin: string | null,
+  funds: { denom: string; amount: string }[] = [],
+  memo = ""
+): Promise<{ txHash: string; height: number; contractAddress: string | null }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  const msg = {
+    typeUrl: "/cosmwasm.wasm.v1.MsgInstantiateContract",
+    value: {
+      sender: address,
+      admin: admin || "",
+      codeId: BigInt(codeId),
+      label,
+      msg: new TextEncoder().encode(JSON.stringify(initMsg)),
+      funds: funds.map((f) => coin(f.amount, f.denom)),
+    },
+  };
+
+  const result = await client.signAndBroadcast(address, [msg], "auto", memo);
+  if (result.code !== 0) {
+    throw new Error(`Contract instantiation failed: ${result.rawLog}`);
+  }
+
+  // Parse the instantiated contract address from events when present.
+  let contractAddress: string | null = null;
+  for (const ev of result.events || []) {
+    if (ev.type === "instantiate") {
+      const attr = ev.attributes.find((a) => a.key === "_contract_address");
+      if (attr) contractAddress = attr.value;
+    }
+  }
+
+  return { txHash: result.transactionHash, height: result.height, contractAddress };
 }
 
 /**
