@@ -757,7 +757,7 @@ export default function Settings() {
           </h3>
           <div className="card space-y-2">
             <p className="led-text text-[12px] font-extrabold text-white led-glow-soft">
-              GG Wallet · v0.1.8
+              GG Wallet · v0.1.9
             </p>
             <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
               Open-source, community wallet for the Gonka.ai blockchain

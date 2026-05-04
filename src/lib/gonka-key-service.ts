@@ -244,7 +244,7 @@ async function gonkaAdminFetch(
  * time so it stays in sync with the manifest.
  */
 const CLIENT_NAME = "gg-wallet";
-const CLIENT_VERSION = "0.1.8";
+const CLIENT_VERSION = "0.1.9";
 
 /**
  * Issue a fresh `wallet-install` API key for this install. Performs PoW

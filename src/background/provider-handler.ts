@@ -74,8 +74,33 @@ async function persistSuggestedChain(chainId: string, chainInfo: any): Promise<v
 loadSuggestedChains();
 
 // ------------------------------------------------------------------
-//  Pending approval requests
+//  Pending approval requests + anti-spam controls
+//
+//  A malicious page can call enable() / signAmino() / signDirect() /
+//  signArbitrary() in a tight loop and open an unbounded number of
+//  approval popups (ref: https://github.com/gonkalabs/ggwallet/issues/2).
+//
+//  Defences, layered from cheap to expensive:
+//
+//    1. Per-origin approval queue. Only one approval popup is ever
+//       visible per origin at a time; additional requests from the same
+//       origin are FIFO-queued. Legitimate sequential flows (e.g. Hex's
+//       enable → signAmino chain on hex.exchange) still pass through
+//       without friction — each step awaits its predecessor, so the
+//       queue rarely holds more than the active entry.
+//
+//    2. Bounded queue: once the queue reaches MAX_QUEUED_APPROVALS_PER_ORIGIN
+//       (active + waiters), further requests are rejected immediately
+//       and the currently-open popup is re-focused so the user knows
+//       where to respond.
+//
+//    3. Global approval cap: at most MAX_PENDING_APPROVALS_GLOBAL in
+//       flight across every origin, to stop a group of cooperating
+//       iframes / origins from ganging up on the user.
 // ------------------------------------------------------------------
+
+const MAX_QUEUED_APPROVALS_PER_ORIGIN = 3;
+const MAX_PENDING_APPROVALS_GLOBAL = 10;
 
 interface PendingRequest {
   method: string;
@@ -84,60 +109,165 @@ interface PendingRequest {
   resolve: (result: { result?: any; error?: string }) => void;
 }
 
+interface QueuedApproval {
+  requestId: string;
+  method: string;
+  params: any;
+  origin: string;
+  resolve: (result: { result?: any; error?: string }) => void;
+}
+
+interface ApprovalQueueState {
+  active: string | null;        // requestId shown in the active popup
+  windowId: number | null;      // chrome.windows id of the active popup
+  queued: QueuedApproval[];     // FIFO of waiting requests
+}
+
 const _pendingRequests = new Map<string, PendingRequest>();
+const _approvalQueues = new Map<string, ApprovalQueueState>();
 let _requestCounter = 0;
 
 function generateRequestId(): string {
   return `req_${Date.now()}_${++_requestCounter}`;
 }
 
+function getOrCreateQueue(origin: string): ApprovalQueueState {
+  let state = _approvalQueues.get(origin);
+  if (!state) {
+    state = { active: null, windowId: null, queued: [] };
+    _approvalQueues.set(origin, state);
+  }
+  return state;
+}
+
+function queueDepth(state: ApprovalQueueState): number {
+  return (state.active ? 1 : 0) + state.queued.length;
+}
+
+function totalInFlightApprovals(): number {
+  let n = 0;
+  for (const s of _approvalQueues.values()) n += queueDepth(s);
+  return n;
+}
+
+function focusActivePopup(state: ApprovalQueueState): void {
+  if (state.windowId == null) return;
+  // Fire-and-forget; ignore errors (window may already be closed).
+  chrome.windows
+    .update(state.windowId, { focused: true, drawAttention: true })
+    .catch(() => {});
+}
+
 /**
- * Open the approval popup and return a Promise that resolves when
- * the user approves or rejects.
+ * Enqueue an approval request. Opens the popup immediately if nothing
+ * is pending for the origin, otherwise waits for the current popup to
+ * settle. Excess requests (beyond the per-origin or global cap) are
+ * rejected synchronously so the dApp gets an explicit error instead of
+ * a dangling promise.
  */
 function requestApproval(
   method: string,
   params: any,
   origin: string,
 ): Promise<{ result?: any; error?: string }> {
+  const state = getOrCreateQueue(origin);
+
+  if (queueDepth(state) >= MAX_QUEUED_APPROVALS_PER_ORIGIN) {
+    focusActivePopup(state);
+    return Promise.resolve({
+      error:
+        "Too many pending approval requests from this site. Respond to the open request first.",
+    });
+  }
+
+  if (totalInFlightApprovals() >= MAX_PENDING_APPROVALS_GLOBAL) {
+    return Promise.resolve({
+      error:
+        "Too many pending wallet approvals. Respond to the existing requests first.",
+    });
+  }
+
   return new Promise((resolve) => {
     const requestId = generateRequestId();
+    const entry: QueuedApproval = { requestId, method, params, origin, resolve };
 
-    _pendingRequests.set(requestId, { method, params, origin, resolve });
-
-    // Build the URL for the approval page
-    const approvalUrl = chrome.runtime.getURL(
-      `src/popup/approval.html?requestId=${encodeURIComponent(requestId)}`
-    );
-
-    chrome.windows.create(
-      {
-        url: approvalUrl,
-        type: "popup",
-        width: 400,
-        height: 630,
-        focused: true,
-      },
-      (win) => {
-        if (!win?.id) {
-          // Failed to open window — reject
-          _pendingRequests.delete(requestId);
-          resolve({ error: "Failed to open approval window" });
-          return;
-        }
-
-        // If the user closes the window without responding, reject
-        const onRemoved = (windowId: number) => {
-          if (windowId === win.id && _pendingRequests.has(requestId)) {
-            _pendingRequests.delete(requestId);
-            resolve({ error: "User rejected the request" });
-            chrome.windows.onRemoved.removeListener(onRemoved);
-          }
-        };
-        chrome.windows.onRemoved.addListener(onRemoved);
-      }
-    );
+    if (state.active) {
+      state.queued.push(entry);
+    } else {
+      startApproval(entry);
+    }
   });
+}
+
+/**
+ * Register the approval in _pendingRequests, open its popup, and wire
+ * up cleanup so the next queued entry (if any) is processed once this
+ * one settles (approve, reject, or window closed).
+ */
+function startApproval(entry: QueuedApproval): void {
+  const state = getOrCreateQueue(entry.origin);
+  state.active = entry.requestId;
+
+  const wrappedResolve = (result: { result?: any; error?: string }) => {
+    entry.resolve(result);
+    onApprovalSettled(entry.origin, entry.requestId);
+  };
+
+  _pendingRequests.set(entry.requestId, {
+    method: entry.method,
+    params: entry.params,
+    origin: entry.origin,
+    resolve: wrappedResolve,
+  });
+
+  const approvalUrl = chrome.runtime.getURL(
+    `src/popup/approval.html?requestId=${encodeURIComponent(entry.requestId)}`
+  );
+
+  chrome.windows.create(
+    {
+      url: approvalUrl,
+      type: "popup",
+      width: 400,
+      height: 630,
+      focused: true,
+    },
+    (win) => {
+      if (!win?.id) {
+        _pendingRequests.delete(entry.requestId);
+        wrappedResolve({ error: "Failed to open approval window" });
+        return;
+      }
+      state.windowId = win.id;
+
+      // If the user closes the window without responding, reject.
+      const onRemoved = (windowId: number) => {
+        if (windowId !== win.id) return;
+        chrome.windows.onRemoved.removeListener(onRemoved);
+        const pending = _pendingRequests.get(entry.requestId);
+        if (pending) {
+          _pendingRequests.delete(entry.requestId);
+          pending.resolve({ error: "User rejected the request" });
+        }
+      };
+      chrome.windows.onRemoved.addListener(onRemoved);
+    }
+  );
+}
+
+function onApprovalSettled(origin: string, requestId: string): void {
+  const state = _approvalQueues.get(origin);
+  if (!state) return;
+  if (state.active === requestId) {
+    state.active = null;
+    state.windowId = null;
+  }
+  const next = state.queued.shift();
+  if (next) {
+    startApproval(next);
+  } else if (!state.active && state.queued.length === 0) {
+    _approvalQueues.delete(origin);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -311,6 +441,35 @@ export function isAllowedDappOrigin(origin: string | undefined | null): boolean 
 }
 
 // ------------------------------------------------------------------
+//  Per-origin request rate limit (defence in depth)
+//
+//  Even with the approval queue in place, a page could still pound
+//  cheap methods like experimentalSuggestChain / getKey to bloat
+//  storage or burn CPU. A sliding-window limiter gives every origin
+//  a generous but finite budget of provider calls.
+// ------------------------------------------------------------------
+
+const RATE_LIMIT_WINDOW_MS = 10_000;
+const RATE_LIMIT_MAX_REQUESTS = 60; // ~6 req/s sustained — plenty for legit dApps
+const _requestLog = new Map<string, number[]>();
+
+function recordAndCheckRate(origin: string): { ok: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT_WINDOW_MS;
+  const prev = _requestLog.get(origin) || [];
+  // Drop timestamps outside the window (cheap because list is short).
+  let i = 0;
+  while (i < prev.length && prev[i] < cutoff) i++;
+  const recent = i === 0 ? prev : prev.slice(i);
+  recent.push(now);
+  _requestLog.set(origin, recent);
+  if (recent.length > RATE_LIMIT_MAX_REQUESTS) {
+    return { ok: false, retryAfterMs: RATE_LIMIT_WINDOW_MS - (now - recent[0]) };
+  }
+  return { ok: true, retryAfterMs: 0 };
+}
+
+// ------------------------------------------------------------------
 //  Main router
 // ------------------------------------------------------------------
 
@@ -322,6 +481,15 @@ export async function handleProviderRequest(
   if (!isAllowedDappOrigin(origin)) {
     return {
       error: `GG Wallet only connects to HTTPS sites. Origin "${origin || "(unknown)"}" was blocked.`,
+    };
+  }
+
+  const rate = recordAndCheckRate(origin as string);
+  if (!rate.ok) {
+    return {
+      error: `Too many requests from this site. Try again in ${Math.ceil(
+        rate.retryAfterMs / 1000
+      )}s.`,
     };
   }
 
@@ -370,6 +538,18 @@ const UNLOCK_CONTEXT_KEY = "gg_pending_unlock_context";
 type UnlockResolver = { resolve: () => void; reject: (e: Error) => void };
 const _unlockWaiters: Set<UnlockResolver> = new Set();
 
+// Track the current unlock popup so a flood of locked dApp calls (e.g. a
+// malicious site hammering enable() while we're locked) doesn't spawn
+// a new unlock window for every call. All concurrent waiters share one
+// popup; when it closes or unlock succeeds, the tracker is cleared.
+//
+// `_unlockWindowCreating` guards the brief window between the async
+// `chrome.windows.create` call and its callback — without it, a burst
+// of concurrent callers all see `_unlockWindowId == null` and each
+// end up spawning a popup.
+let _unlockWindowId: number | null = null;
+let _unlockWindowCreating = false;
+
 /**
  * Called by the background index after a successful UNLOCK message.
  * Resolves all pending requestUnlock() promises so dApp requests continue.
@@ -379,6 +559,8 @@ export function notifyUnlocked(): void {
     waiter.resolve();
   }
   _unlockWaiters.clear();
+  _unlockWindowId = null;
+  _unlockWindowCreating = false;
   // Clear stored context
   chrome.storage.session.remove(UNLOCK_CONTEXT_KEY).catch(() => {});
 }
@@ -393,6 +575,8 @@ export function rejectUnlock(): void {
     waiter.reject(new Error("User rejected the request"));
   }
   _unlockWaiters.clear();
+  _unlockWindowId = null;
+  _unlockWindowCreating = false;
   chrome.storage.session.remove(UNLOCK_CONTEXT_KEY).catch(() => {});
 }
 
@@ -412,6 +596,50 @@ async function storeUnlockContext(origin?: string, method?: string): Promise<voi
  * @param origin  The dApp origin requesting access (shown in the popup).
  * @param method  The API method being requested (shown in the popup).
  */
+/**
+ * Open a fresh unlock popup, or re-focus the already-open one.
+ *
+ * Called when a dApp request hits the locked gate. All concurrent
+ * waiters share a single popup — this prevents a page from spawning
+ * hundreds of unlock windows by looping over locked requests.
+ */
+function openOrFocusUnlockWindow(): void {
+  if (_unlockWindowId != null) {
+    // Re-focus the existing window. If Chrome tells us the window is
+    // gone (e.g. user already closed it), fall through to reopen.
+    chrome.windows
+      .update(_unlockWindowId, { focused: true, drawAttention: true })
+      .then(() => {})
+      .catch(() => {
+        _unlockWindowId = null;
+        openOrFocusUnlockWindow();
+      });
+    return;
+  }
+  // Guard against the race where several callers reach this point
+  // before the first chrome.windows.create callback has set the id.
+  if (_unlockWindowCreating) return;
+  _unlockWindowCreating = true;
+
+  // Always open a standalone popup window — chrome.action.openPopup()
+  // requires a user gesture and never works from a background script.
+  const popupUrl = chrome.runtime.getURL("src/popup/index.html");
+  chrome.windows.create(
+    { url: popupUrl, type: "popup", width: 400, height: 630, focused: true },
+    (win) => {
+      _unlockWindowCreating = false;
+      if (!win?.id) return;
+      _unlockWindowId = win.id;
+      const onRemoved = (wid: number) => {
+        if (wid !== win.id) return;
+        chrome.windows.onRemoved.removeListener(onRemoved);
+        if (_unlockWindowId === win.id) _unlockWindowId = null;
+      };
+      chrome.windows.onRemoved.addListener(onRemoved);
+    },
+  );
+}
+
 function requestUnlock(origin?: string, method?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const waiter: UnlockResolver = { resolve, reject };
@@ -425,13 +653,7 @@ function requestUnlock(origin?: string, method?: string): Promise<void> {
 
     // Persist context for the popup to read (survives SW restarts)
     storeUnlockContext(origin, method).then(() => {
-      // Always open a standalone popup window — chrome.action.openPopup()
-      // requires a user gesture and never works from a background script.
-      const popupUrl = chrome.runtime.getURL("src/popup/index.html");
-      chrome.windows.create(
-        { url: popupUrl, type: "popup", width: 400, height: 630, focused: true },
-        () => {},
-      );
+      openOrFocusUnlockWindow();
     });
 
     // Timeout after 5 minutes
@@ -809,4 +1031,25 @@ async function executeSignArbitrary(params: {
       signature: toBase64(signatureBytes),
     },
   };
+}
+
+// ------------------------------------------------------------------
+//  Test helpers
+// ------------------------------------------------------------------
+
+/**
+ * Test-only: reset every piece of anti-spam state (approval queues,
+ * pending-request map, rate-limit log, unlock popup tracking).
+ *
+ * Never call this in production — it will strand any in-flight approval
+ * promises. Production lifetime of this state is tied to the service
+ * worker; a SW restart naturally resets everything.
+ */
+export function __resetAntiSpamStateForTests(): void {
+  _approvalQueues.clear();
+  _pendingRequests.clear();
+  _unlockWaiters.clear();
+  _unlockWindowId = null;
+  _unlockWindowCreating = false;
+  _requestLog.clear();
 }
