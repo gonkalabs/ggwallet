@@ -16,11 +16,15 @@ const CHANNEL = "gonka-wallet-provider";
 
 function injectScript(): void {
   try {
+    if (window.top !== window) return;
+
     const script = document.createElement("script");
     script.src = chrome.runtime.getURL("src/provider/inpage.js");
     script.type = "module";
     // Insert as early as possible
     const container = document.head || document.documentElement;
+    if (!container) return;
+
     container.insertBefore(script, container.children[0] || null);
     script.onload = () => script.remove();
   } catch (err) {

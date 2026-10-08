@@ -31,6 +31,8 @@ const KEYS = {
   GONKA_RPC_LAST_NEAR_LIMIT_NOTICE: "gg_rpc_gonka_gg_last_near_limit",
   /** RPC provider preference: "gonka" (default) | "public" (opt-out). */
   GONKA_RPC_PROVIDER_PREF: "gg_rpc_gonka_gg_provider_pref",
+  /** Gas headroom multiplier applied to simulated gas (e.g. 2 = 2.0×). */
+  GAS_HEADROOM: "gg_gas_headroom",
 
   // --- Legacy single-wallet keys (migration) ---
   ENCRYPTED_MNEMONIC: "gg_encrypted_mnemonic",

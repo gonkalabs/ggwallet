@@ -24,7 +24,13 @@ export const GONKA_BECH32_CONFIG = {
   bech32PrefixConsPub: "gonkavalconspub",
 } as const;
 
-export const GONKA_GAS_PRICE = "0ngonka";
+/**
+ * Minimum gas price since the v0.2.16 upgrade.
+ * Bank sends, authz, feegrant, staking, IBC, and contract txs are charged
+ * at 1 ngonka per gas. Governance votes are exempt and stay at 0.
+ * Vesting coins cannot pay this fee — only spendable ngonka can.
+ */
+export const GONKA_GAS_PRICE = "1ngonka";
 
 export const GONKA_EXPLORER_URL = "https://gonka.gg";
 export const GONKA_EXPLORER_API_KEY = "gnk_live_VhYzuMO2cSQDq-WkNnQQzDl5DF5hxaQc3pwXtWisKsc";

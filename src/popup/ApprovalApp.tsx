@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import Spinner from "@/popup/components/Spinner";
 import logo from "@/assets/ggwallet.png";
+import { readAuthInfoFee } from "@/lib/fees";
 
 /**
  * Approval popup — shown in a separate window when a dApp requests
@@ -303,7 +304,7 @@ function SignAminoApproval({ request }: { request: PendingRequest }) {
             <div className="flex justify-between">
               <span className="text-xs text-surface-500">Fee</span>
               <span className="text-xs text-surface-300">
-                {signDoc.fee.amount?.map((a: any) => `${a.amount} ${a.denom}`).join(", ") || "0"}{" "}
+                {signDoc.fee.amount?.map((a: any) => formatAmount(String(a.amount), a.denom)).join(", ") || "0"}{" "}
                 (gas: {signDoc.fee.gas})
               </span>
             </div>
@@ -702,6 +703,7 @@ function DecodedMessage({ msg, index }: { msg: any; index: number }) {
 function SignDirectApproval({ request }: { request: PendingRequest }) {
   const { chainId, signer, signDoc } = request.params || {};
   const { messages, memo } = decodeBodyBytes(signDoc?.bodyBytes);
+  const directFee = readAuthInfoFee(toUint8ArrayFromAny(signDoc?.authInfoBytes));
 
   return (
     <div>
@@ -750,6 +752,19 @@ function SignDirectApproval({ request }: { request: PendingRequest }) {
             <div className="flex justify-between">
               <span className="text-xs text-surface-500">Memo</span>
               <span className="text-xs text-surface-300">{memo}</span>
+            </div>
+          </>
+        )}
+
+        {directFee && (
+          <>
+            <div className="border-t border-white/[0.04]" />
+            <div className="flex justify-between">
+              <span className="text-xs text-surface-500">Fee</span>
+              <span className="text-xs text-surface-300">
+                {directFee.coins.map((coin) => formatAmount(coin.amount, coin.denom)).join(", ") || "0"}{" "}
+                (gas: {directFee.gas})
+              </span>
             </div>
           </>
         )}

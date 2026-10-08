@@ -12,6 +12,8 @@ import type {
   GonkaRpcUsage,
   GonkaRpcProviderPref,
 } from "@/lib/storage";
+import GasHeadroomControl from "@/popup/components/GasHeadroomControl";
+import { GAS_HEADROOM_RECOMMENDED } from "@/lib/gas-headroom";
 import Layout from "@/popup/components/Layout";
 import PasswordInput from "@/popup/components/PasswordInput";
 import Spinner from "@/popup/components/Spinner";
@@ -39,6 +41,7 @@ export default function Settings() {
 
   // Auto-lock
   const [autoLockMinutes, setAutoLockMinutes] = useState<number>(5);
+  const [gasHeadroom, setGasHeadroom] = useState(GAS_HEADROOM_RECOMMENDED);
   const [autoLockSaving, setAutoLockSaving] = useState(false);
 
   // Address book
@@ -87,6 +90,9 @@ export default function Settings() {
     });
     sendMessage({ type: "GET_AUTO_LOCK" }).then((resp) => {
       if (resp.minutes !== undefined) setAutoLockMinutes(resp.minutes);
+    });
+    sendMessage({ type: "GET_GAS_HEADROOM" }).then((resp) => {
+      if (typeof resp?.multiplier === "number") setGasHeadroom(resp.multiplier);
     });
     sendMessage({ type: "GET_ADDRESS_BOOK" }).then((resp) => {
       if (resp.entries) setAddressBook(resp.entries);
@@ -573,6 +579,26 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* Gas headroom */}
+        <div>
+          <h3 className="led-eyebrow mb-2 ml-1">
+            <span className="led-eyebrow-dot" />
+            Gas Headroom
+          </h3>
+          <div className="card">
+            <p className="led-text text-[10px] font-medium text-white/35 mb-3 normal-case" style={{ textTransform: "none", letterSpacing: "0.01em" }}>
+              Multiplier on simulated gas for every paid transaction. The recommended value is 2.0×.
+            </p>
+            <GasHeadroomControl
+              value={gasHeadroom}
+              onChange={(next) => {
+                setGasHeadroom(next);
+                sendMessage({ type: "SET_GAS_HEADROOM", multiplier: next });
+              }}
+            />
+          </div>
+        </div>
+
         {/* Auto-Lock */}
         <div>
           <h3 className="led-eyebrow mb-2 ml-1">
@@ -757,7 +783,7 @@ export default function Settings() {
           </h3>
           <div className="card space-y-2">
             <p className="led-text text-[12px] font-extrabold text-white led-glow-soft">
-              GG Wallet · v0.1.9
+              GG Wallet · v0.2.0
             </p>
             <p className="led-text text-[10px] font-medium text-white/55" style={{ letterSpacing: "0.04em" }}>
               Open-source, community wallet for the Gonka.ai blockchain

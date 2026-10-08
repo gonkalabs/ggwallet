@@ -1,9 +1,14 @@
 import { StargateClient, SigningStargateClient, GasPrice, coin, defaultRegistryTypes } from "@cosmjs/stargate";
-import { DirectSecp256k1HdWallet, Registry } from "@cosmjs/proto-signing";
+import { MsgTransfer } from "cosmjs-types/ibc/applications/transfer/v1/tx";
+import { DirectSecp256k1HdWallet, Registry, type EncodeObject } from "@cosmjs/proto-signing";
+import type { StdFee } from "@cosmjs/amino";
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve, stringToPath } from "@cosmjs/crypto";
 import { MsgExecuteContract, MsgInstantiateContract } from "cosmjs-types/cosmwasm/wasm/v1/tx";
 import { MsgBeginRedelegate } from "cosmjs-types/cosmos/staking/v1beta1/tx";
-import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE, GONKA_DECIMALS, GONKA_DISPLAY_DENOM } from "./gonka";
+import { GONKA_DENOM, GONKA_BECH32_PREFIX, GONKA_COIN_TYPE, GONKA_DECIMALS, GONKA_DISPLAY_DENOM, GONKA_GAS_PRICE } from "./gonka";
+import { feeForSimulatedGas } from "./fees";
+import { clampGasHeadroom, GAS_HEADROOM_RECOMMENDED } from "./gas-headroom";
+import { storageGet, KEYS } from "./storage";
 import { getActiveEndpoint } from "./rpc";
 
 const registry = new Registry([
@@ -74,7 +79,7 @@ export async function getSigningClient(mnemonic: string): Promise<{
   const { rpc } = await getActiveEndpoint();
   const client = await SigningStargateClient.connectWithSigner(rpc, wallet, {
     registry,
-    gasPrice: GasPrice.fromString(`0${GONKA_DENOM}`),
+    gasPrice: GasPrice.fromString(GONKA_GAS_PRICE),
   });
 
   return { client, address: account.address };
@@ -150,6 +155,28 @@ export async function resolveIbcDenom(
 }
 
 /**
+ * Coins the account can actually spend. Vesting and other locked balances
+ * are excluded. Fees can only be paid from spendable ngonka.
+ */
+export async function querySpendableBalances(
+  address: string
+): Promise<{ denom: string; amount: string }[]> {
+  const { rest } = await getActiveEndpoint();
+  const resp = await fetch(`${rest}cosmos/bank/v1beta1/spendable_balances/${address}`, {
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch spendable balance (${resp.status})`);
+  }
+  const data = await resp.json();
+  const balances = Array.isArray(data.balances) ? data.balances : [];
+  return balances.map((coin: { denom?: string; amount?: string }) => ({
+    denom: String(coin.denom ?? ""),
+    amount: String(coin.amount ?? "0"),
+  }));
+}
+
+/**
  * Query all token balances for an address (GNK + IBC tokens).
  * Resolves IBC denom hashes to human-readable symbols via the REST endpoint.
  */
@@ -192,6 +219,160 @@ export async function queryAllBalances(address: string): Promise<TokenBalance[]>
   });
 }
 
+// ------------------------------------------------------------------
+//  Known IBC channels (Gonka-side channel IDs)
+//  Verified against: curl .../ibc/core/channel/v1/channels | jq ...
+// ------------------------------------------------------------------
+
+export interface IbcChannel {
+  /** Gonka-side channel ID, e.g. "channel-5" */
+  channelId: string;
+  /** Human-readable destination chain name */
+  chainName: string;
+  /** Expected bech32 prefix of the destination address */
+  bech32Prefix: string;
+}
+
+export const KNOWN_IBC_CHANNELS: IbcChannel[] = [
+  { channelId: "channel-5",  chainName: "Kava",    bech32Prefix: "kava"    },
+  { channelId: "channel-1",  chainName: "Osmosis",  bech32Prefix: "osmo"    },
+  { channelId: "channel-3",  chainName: "Neutron",  bech32Prefix: "neutron" },
+  { channelId: "channel-0",  chainName: "Axelar",   bech32Prefix: "axelar"  },
+];
+
+// ------------------------------------------------------------------
+//  IBC cross-chain transfer (MsgTransfer)
+// ------------------------------------------------------------------
+
+export interface EstimatedFee {
+  /** Raw gas from simulation, before the user's headroom multiplier. */
+  gasUsed: number;
+}
+
+async function readGasHeadroom(override?: number): Promise<number> {
+  if (override != null && Number.isFinite(Number(override))) {
+    return clampGasHeadroom(Number(override));
+  }
+  const stored = await storageGet<number>(KEYS.GAS_HEADROOM);
+  return clampGasHeadroom(stored ?? GAS_HEADROOM_RECOMMENDED);
+}
+
+async function estimateMessages(
+  mnemonic: string,
+  build: (address: string) => readonly EncodeObject[],
+  memo = ""
+): Promise<EstimatedFee> {
+  const { client, address } = await getSigningClient(mnemonic);
+  const gasUsed = await client.simulate(address, build(address), memo);
+  return { gasUsed };
+}
+
+export async function estimateSendFee(
+  mnemonic: string,
+  recipientAddress: string,
+  amount: string,
+  denom: string = GONKA_DENOM,
+  memo = ""
+): Promise<EstimatedFee> {
+  return estimateMessages(
+    mnemonic,
+    (address) => [
+      {
+        typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+        value: {
+          fromAddress: address,
+          toAddress: recipientAddress,
+          amount: [coin(amount, denom)],
+        },
+      },
+    ],
+    memo
+  );
+}
+
+export async function estimateIbcFee(
+  mnemonic: string,
+  recipient: string,
+  amount: string,
+  denom: string,
+  sourceChannel: string,
+  memo = ""
+): Promise<EstimatedFee> {
+  const timeoutTimestampNs = BigInt(Math.floor(Date.now() / 1000) + 600) * BigInt(1_000_000_000);
+  return estimateMessages(
+    mnemonic,
+    (address) => [
+      {
+        typeUrl: "/ibc.applications.transfer.v1.MsgTransfer",
+        value: MsgTransfer.fromPartial({
+          sourcePort: "transfer",
+          sourceChannel,
+          sender: address,
+          receiver: recipient,
+          token: coin(amount, denom),
+          timeoutTimestamp: timeoutTimestampNs,
+        }),
+      },
+    ],
+    memo
+  );
+}
+
+/**
+ * Send tokens from Gonka to another Cosmos chain via IBC.
+ *
+ * @param mnemonic       Sender's mnemonic
+ * @param recipient      Destination address on the target chain (e.g. kava1...)
+ * @param amount         Amount in minimal denomination (e.g. uusdt string)
+ * @param denom          On-chain denom (ibc/... or native)
+ * @param sourceChannel  Gonka-side IBC channel, e.g. "channel-5"
+ * @param memo           Optional memo
+ */
+export async function ibcTransfer(
+  mnemonic: string,
+  recipient: string,
+  amount: string,
+  denom: string,
+  sourceChannel: string,
+  memo = "",
+  headroom?: number
+): Promise<{ txHash: string; height: number }> {
+  const { client, address } = await getSigningClient(mnemonic);
+
+  // Timeout: 10 minutes from now (sendIbcTokens takes seconds)
+  const timeoutTimestampSec = Math.floor(Date.now() / 1000) + 600;
+  const transferMsg: EncodeObject = {
+    typeUrl: "/ibc.applications.transfer.v1.MsgTransfer",
+    value: MsgTransfer.fromPartial({
+      sourcePort: "transfer",
+      sourceChannel,
+      sender: address,
+      receiver: recipient,
+      token: coin(amount, denom),
+      timeoutTimestamp: BigInt(timeoutTimestampSec) * BigInt(1_000_000_000),
+    }),
+  };
+  const fee = await simulatedGasFee(client, address, [transferMsg], memo, true, headroom);
+
+  const result = await client.sendIbcTokens(
+    address,
+    recipient,
+    coin(amount, denom),
+    "transfer",            // IBC transfer port (always "transfer" for x/ibc)
+    sourceChannel,
+    undefined,             // timeout height (we rely on timestamp instead)
+    timeoutTimestampSec,
+    fee,
+    memo
+  );
+
+  if (result.code !== 0) {
+    throw new Error(`IBC transfer failed (code ${result.code}): ${result.rawLog}`);
+  }
+
+  return { txHash: result.transactionHash, height: result.height };
+}
+
 /**
  * Send tokens from the wallet. Defaults to native GNK but accepts any denom (IBC included).
  */
@@ -200,16 +381,21 @@ export async function sendTokens(
   recipientAddress: string,
   amount: string,
   denom: string = GONKA_DENOM,
-  memo = ""
+  memo = "",
+  headroom?: number
 ): Promise<{ txHash: string; height: number }> {
   const { client, address } = await getSigningClient(mnemonic);
-  const result = await client.sendTokens(
-    address,
-    recipientAddress,
-    [coin(amount, denom)],
-    "auto",
-    memo
-  );
+  const coins = [coin(amount, denom)];
+  const sendMsg: EncodeObject = {
+    typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+    value: {
+      fromAddress: address,
+      toAddress: recipientAddress,
+      amount: coins,
+    },
+  };
+  const fee = await simulatedGasFee(client, address, [sendMsg], memo, true, headroom);
+  const result = await client.sendTokens(address, recipientAddress, coins, fee, memo);
 
   if (result.code !== 0) {
     throw new Error(`Transaction failed with code ${result.code}: ${result.rawLog}`);
@@ -230,12 +416,17 @@ export async function delegateTokens(
   amount: string
 ): Promise<{ txHash: string }> {
   const { client, address } = await getSigningClient(mnemonic);
-  const result = await client.delegateTokens(
-    address,
-    validatorAddress,
-    coin(amount, GONKA_DENOM),
-    "auto"
-  );
+  const amountCoin = coin(amount, GONKA_DENOM);
+  const msg: EncodeObject = {
+    typeUrl: "/cosmos.staking.v1beta1.MsgDelegate",
+    value: {
+      delegatorAddress: address,
+      validatorAddress,
+      amount: amountCoin,
+    },
+  };
+  const fee = await simulatedGasFee(client, address, [msg]);
+  const result = await client.delegateTokens(address, validatorAddress, amountCoin, fee);
 
   if (result.code !== 0) {
     throw new Error(`Delegation failed: ${result.rawLog}`);
@@ -253,12 +444,17 @@ export async function undelegateTokens(
   amount: string
 ): Promise<{ txHash: string }> {
   const { client, address } = await getSigningClient(mnemonic);
-  const result = await client.undelegateTokens(
-    address,
-    validatorAddress,
-    coin(amount, GONKA_DENOM),
-    "auto"
-  );
+  const amountCoin = coin(amount, GONKA_DENOM);
+  const msg: EncodeObject = {
+    typeUrl: "/cosmos.staking.v1beta1.MsgUndelegate",
+    value: {
+      delegatorAddress: address,
+      validatorAddress,
+      amount: amountCoin,
+    },
+  };
+  const fee = await simulatedGasFee(client, address, [msg]);
+  const result = await client.undelegateTokens(address, validatorAddress, amountCoin, fee);
 
   if (result.code !== 0) {
     throw new Error(`Undelegation failed: ${result.rawLog}`);
@@ -410,6 +606,35 @@ export async function queryVote(proposalId: string, voter: string): Promise<stri
   }
 }
 
+/**
+ * Simulate gas and attach a zero coin amount. Used for governance votes,
+ * which the chain does not charge.
+ */
+async function simulatedGasFee(
+  client: SigningStargateClient,
+  address: string,
+  messages: readonly EncodeObject[],
+  memo = "",
+  pay = true,
+  headroom?: number
+): Promise<StdFee> {
+  const gasUsed = await client.simulate(address, messages, memo);
+  const priced = feeForSimulatedGas(gasUsed, await readGasHeadroom(headroom));
+  return {
+    amount: [coin(pay ? priced.amount : "0", GONKA_DENOM)],
+    gas: priced.gas,
+  };
+}
+
+async function zeroFee(
+  client: SigningStargateClient,
+  address: string,
+  messages: readonly EncodeObject[],
+  memo = ""
+): Promise<StdFee> {
+  return simulatedGasFee(client, address, messages, memo, false);
+}
+
 export async function voteProposal(
   mnemonic: string,
   proposalId: string,
@@ -433,7 +658,10 @@ export async function voteProposal(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [msg], "auto");
+  // Votes are not charged after v0.2.16. A zero fee lets an account vote
+  // when its GNK is vesting and cannot pay gas.
+  const fee = await zeroFee(client, address, [msg]);
+  const result = await client.signAndBroadcast(address, [msg], fee);
   if (result.code !== 0) {
     throw new Error(`Vote failed: ${result.rawLog}`);
   }
@@ -463,7 +691,8 @@ export async function submitProposal(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [msg], "auto");
+  const fee = await simulatedGasFee(client, address, [msg]);
+  const result = await client.signAndBroadcast(address, [msg], fee);
   if (result.code !== 0) {
     throw new Error(`Submit proposal failed: ${result.rawLog}`);
   }
@@ -486,7 +715,8 @@ export async function depositToProposal(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [msg], "auto");
+  const fee = await simulatedGasFee(client, address, [msg]);
+  const result = await client.signAndBroadcast(address, [msg], fee);
   if (result.code !== 0) {
     throw new Error(`Deposit failed: ${result.rawLog}`);
   }
@@ -566,7 +796,8 @@ export async function withdrawRewards(
     },
   }));
 
-  const result = await client.signAndBroadcast(address, msgs, "auto");
+  const fee = await simulatedGasFee(client, address, msgs);
+  const result = await client.signAndBroadcast(address, msgs, fee);
 
   if (result.code !== 0) {
     throw new Error(`Withdraw rewards failed: ${result.rawLog}`);
@@ -598,7 +829,8 @@ export async function redelegateTokens(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [msg], "auto", memo);
+  const fee = await simulatedGasFee(client, address, [msg], memo);
+  const result = await client.signAndBroadcast(address, [msg], fee, memo);
   if (result.code !== 0) {
     throw new Error(`Redelegation failed: ${result.rawLog}`);
   }
@@ -632,7 +864,8 @@ export async function instantiateContract(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [msg], "auto", memo);
+  const fee = await simulatedGasFee(client, address, [msg], memo);
+  const result = await client.signAndBroadcast(address, [msg], fee, memo);
   if (result.code !== 0) {
     throw new Error(`Contract instantiation failed: ${result.rawLog}`);
   }
@@ -671,7 +904,8 @@ export async function executeContract(
     },
   };
 
-  const result = await client.signAndBroadcast(address, [executeMsg], "auto");
+  const fee = await simulatedGasFee(client, address, [executeMsg]);
+  const result = await client.signAndBroadcast(address, [executeMsg], fee);
 
   if (result.code !== 0) {
     throw new Error(`Contract execution failed: ${result.rawLog}`);

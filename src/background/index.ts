@@ -31,13 +31,14 @@ import {
 } from "./keystore";
 import { storageGet, storageSet, KEYS, type AddressBookEntry } from "@/lib/storage";
 import {
-  queryAllBalances, sendTokens, delegateTokens, undelegateTokens, withdrawRewards, resetClient,
+  queryAllBalances, querySpendableBalances, sendTokens, ibcTransfer, estimateSendFee, estimateIbcFee, delegateTokens, undelegateTokens, withdrawRewards, resetClient,
   queryProposals, queryProposal, queryProposalTally, queryGovParams, queryBondedTokens,
   queryVote, voteProposal, submitProposal, depositToProposal,
   executeContract,
   type VoteOption,
 } from "@/lib/cosmos";
 import { GNS_CONTRACT_ADDRESS } from "@/lib/gonka";
+import { clampGasHeadroom, GAS_HEADROOM_RECOMMENDED } from "@/lib/gas-headroom";
 import { parseCommand, isQueryIntent } from "@/lib/inferenced-parser";
 import { executeIntent, runQuery } from "@/lib/inferenced-executor";
 import {
@@ -274,6 +275,17 @@ async function handleMessage(msg: any): Promise<any> {
 
     // ---- Queries ----
 
+    case "GET_SPENDABLE": {
+      const address = getAddress();
+      if (!address) return { balances: [] };
+      try {
+        const balances = await querySpendableBalances(address);
+        return { balances };
+      } catch (e: any) {
+        return { balances: [], error: e.message };
+      }
+    }
+
     case "GET_BALANCE": {
       const address = getAddress();
       if (!address) return { balance: "0", tokenBalances: [] };
@@ -291,8 +303,72 @@ async function handleMessage(msg: any): Promise<any> {
     case "SEND_TOKENS": {
       const mnemonic = getMnemonic();
       if (!mnemonic) return { success: false, error: "Wallet is locked" };
-      const result = await sendTokens(mnemonic, msg.recipient, msg.amount, msg.denom, msg.memo || "");
+      const result = await sendTokens(
+        mnemonic,
+        msg.recipient,
+        msg.amount,
+        msg.denom,
+        msg.memo || "",
+        msg.headroom
+      );
       return { success: true, ...result };
+    }
+
+    case "IBC_TRANSFER": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      try {
+        const result = await ibcTransfer(
+          mnemonic,
+          msg.recipient,
+          msg.amount,
+          msg.denom,
+          msg.sourceChannel,
+          msg.memo || "",
+          msg.headroom
+        );
+        return { success: true, ...result };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    }
+
+    case "GET_GAS_HEADROOM": {
+      const stored = await storageGet<number>(KEYS.GAS_HEADROOM);
+      return { multiplier: clampGasHeadroom(stored ?? GAS_HEADROOM_RECOMMENDED) };
+    }
+
+    case "SET_GAS_HEADROOM": {
+      const multiplier = clampGasHeadroom(Number(msg.multiplier));
+      await storageSet({ [KEYS.GAS_HEADROOM]: multiplier });
+      return { success: true, multiplier };
+    }
+
+    case "ESTIMATE_TX_FEE": {
+      const mnemonic = getMnemonic();
+      if (!mnemonic) return { success: false, error: "Wallet is locked" };
+      try {
+        const fee =
+          msg.kind === "ibc"
+            ? await estimateIbcFee(
+                mnemonic,
+                msg.recipient,
+                msg.amount,
+                msg.denom,
+                msg.sourceChannel,
+                msg.memo || ""
+              )
+            : await estimateSendFee(
+                mnemonic,
+                msg.recipient,
+                msg.amount,
+                msg.denom,
+                msg.memo || ""
+              );
+        return { success: true, ...fee };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
     }
 
     case "DELEGATE": {

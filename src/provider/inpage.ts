@@ -360,39 +360,67 @@ const gonkaWalletProvider = {
 //  Inject into window
 // ------------------------------------------------------------------
 
+type WalletGlobalName =
+  | "gonkaWallet"
+  | "getOfflineSigner"
+  | "getOfflineSignerOnlyAmino"
+  | "getOfflineSignerAuto";
+
+function defineWalletGlobal(
+  name: WalletGlobalName,
+  value: any,
+  options: { writable: boolean; configurable: boolean },
+): boolean {
+  const existing = Object.getOwnPropertyDescriptor(window, name);
+  if (existing) {
+    console.debug(`[GG Wallet] Skipping window.${name}; property already exists.`);
+    return false;
+  }
+
+  try {
+    Object.defineProperty(window, name, {
+      value,
+      writable: options.writable,
+      configurable: options.configurable,
+    });
+    return true;
+  } catch (err) {
+    console.debug(`[GG Wallet] Could not define window.${name}:`, err);
+    return false;
+  }
+}
+
 // Primary: window.gonkaWallet
-Object.defineProperty(window, "gonkaWallet", {
-  value: gonkaWalletProvider,
-  writable: false,
-  configurable: false,
-});
+defineWalletGlobal("gonkaWallet", gonkaWalletProvider, { writable: false, configurable: false });
 
 // Convenience helpers on window (Keplr compatibility)
-Object.defineProperty(window, "getOfflineSigner", {
-  value: (chainId: string, signOptions?: KeplrSignOptions) =>
+const installedGetOfflineSigner = defineWalletGlobal(
+  "getOfflineSigner",
+  (chainId: string, signOptions?: KeplrSignOptions) =>
     gonkaWalletProvider.getOfflineSigner(chainId, signOptions),
-  writable: true,
-  configurable: true,
-});
+  { writable: true, configurable: true },
+);
 
-Object.defineProperty(window, "getOfflineSignerOnlyAmino", {
-  value: (chainId: string, signOptions?: KeplrSignOptions) =>
+defineWalletGlobal(
+  "getOfflineSignerOnlyAmino",
+  (chainId: string, signOptions?: KeplrSignOptions) =>
     gonkaWalletProvider.getOfflineSignerOnlyAmino(chainId, signOptions),
-  writable: true,
-  configurable: true,
-});
+  { writable: true, configurable: true },
+);
 
-Object.defineProperty(window, "getOfflineSignerAuto", {
-  value: async (chainId: string, signOptions?: KeplrSignOptions) =>
+defineWalletGlobal(
+  "getOfflineSignerAuto",
+  async (chainId: string, signOptions?: KeplrSignOptions) =>
     gonkaWalletProvider.getOfflineSignerAuto(chainId, signOptions),
-  writable: true,
-  configurable: true,
-});
+  { writable: true, configurable: true },
+);
 
 // Dispatch event so dApps know the wallet is ready
 window.dispatchEvent(new Event("gonkaWallet#initialized"));
 
-// Also dispatch keplr#initialized for compatibility
-window.dispatchEvent(new Event("keplr#initialized"));
+// Also dispatch keplr#initialized when our compatibility helper is present.
+if (installedGetOfflineSigner) {
+  window.dispatchEvent(new Event("keplr#initialized"));
+}
 
 console.log("[GG Wallet] Provider injected at window.gonkaWallet");

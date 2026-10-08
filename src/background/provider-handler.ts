@@ -21,6 +21,7 @@ import {
   GONKA_COIN_TYPE,
   GONKA_BECH32_PREFIX,
 } from "@/lib/gonka";
+import { raiseAminoFee, raiseDirectAuthInfoFee } from "@/lib/fees";
 import { getActiveEndpoint } from "@/lib/rpc";
 import { storageGet, storageSet, KEYS, type ConnectedSite } from "@/lib/storage";
 import { Slip10RawIndex, HdPath, Bip39, EnglishMnemonic, Slip10, Slip10Curve } from "@cosmjs/crypto";
@@ -683,7 +684,41 @@ async function handleWithApproval(
       return { error: "Wallet is locked. Please unlock GG Wallet first." };
     }
   }
-  return requestApproval(method, params, origin || "unknown");
+  return requestApproval(method, applyChainFee(method, params), origin || "unknown");
+}
+
+/**
+ * Gonka rejects a paid tx whose fee is below gas × 1ngonka. dApps that
+ * still build a zero fee get that minimum written into the sign doc
+ * before the user reviews it. Votes stay free.
+ */
+function applyChainFee(method: string, params: any): any {
+  if (!params || params.chainId !== GONKA_CHAIN_ID) return params;
+
+  if (method === "signAmino" && params.signDoc) {
+    const signDoc = normalizeAminoSignDoc(params.signDoc);
+    const types = (signDoc.msgs ?? []).map((msg: any) => String(msg?.type ?? ""));
+    return {
+      ...params,
+      signDoc: { ...signDoc, fee: raiseAminoFee(signDoc.fee ?? {}, types) },
+    };
+  }
+
+  if (method === "signDirect" && params.signDoc) {
+    const bodyBytes = toUint8ArrayFromAny(params.signDoc.bodyBytes);
+    const authInfoBytes = toUint8ArrayFromAny(params.signDoc.authInfoBytes);
+    const nextAuth = raiseDirectAuthInfoFee(authInfoBytes, bodyBytes);
+    return {
+      ...params,
+      signDoc: {
+        ...params.signDoc,
+        bodyBytes: Array.from(bodyBytes),
+        authInfoBytes: Array.from(nextAuth),
+      },
+    };
+  }
+
+  return params;
 }
 
 // ------------------------------------------------------------------
